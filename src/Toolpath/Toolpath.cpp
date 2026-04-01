@@ -6,17 +6,17 @@
 
 // ── Contour-parallel toolpath generation ─────────────────────────────────────
 
-std::vector<ToolpathContour> generateLaserToolpath(
+std::vector<ToolpathContour> generateToolpath(
     const geo::Paths& clearance, const Config& config)
 {
-    double beamRadius = config.machine.laser_beam_diameter / 2.0;
-    double step = config.machine.laser_beam_diameter * (1.0 - config.cam.overlap);
-    double initialOffset = config.cam.offset + beamRadius;
+    double toolRadius = config.machine.engraver_tip_width / 2.0;
+    double step = config.machine.engraver_tip_width * (1.0 - config.cam.overlap);
+    double initialOffset = config.cam.offset + toolRadius;
     double simplifyTol = step / 2.0;
 
     if (step <= 0)
-        throw std::runtime_error("Invalid step size: beam=" +
-            std::to_string(config.machine.laser_beam_diameter) +
+        throw std::runtime_error("Invalid step size: tool_width=" +
+            std::to_string(config.machine.engraver_tip_width) +
             " overlap=" + std::to_string(config.cam.overlap));
 
     geo::Paths current = geo::offset(clearance, -initialOffset);

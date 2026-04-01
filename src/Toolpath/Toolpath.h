@@ -7,7 +7,7 @@ struct ToolpathContour {
     std::vector<geo::Point> points;
 };
 
-std::vector<ToolpathContour> generateLaserToolpath(
+std::vector<ToolpathContour> generateToolpath(
     const geo::Paths& clearance, const Config& config);
 
 std::vector<ToolpathContour> orderContours(

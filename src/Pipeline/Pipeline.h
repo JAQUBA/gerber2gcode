@@ -7,7 +7,7 @@
 using LogCallback = std::function<void(const std::string&)>;
 
 struct PipelineParams {
-    std::string configPath;
+    Config config;
     std::string kicadDir;
     std::string outputPath;
     double xOffset  = 0.0;

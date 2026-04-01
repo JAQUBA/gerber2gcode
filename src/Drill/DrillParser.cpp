@@ -17,6 +17,7 @@ std::vector<DrillHole> parseDrill(const std::string& filepath) {
     std::string fileFunction;
     bool isMetric = true;
     bool inHeader = false;
+    bool inRoute  = false;  // M15..M16 rout mode — skip slot moves
 
     std::regex toolDefRe(R"(T(\d+)C([\d.]+))");
     std::regex toolSelRe(R"(^T(\d+)$)");
@@ -46,13 +47,13 @@ std::vector<DrillHole> parseDrill(const std::string& filepath) {
         if (line == "%")   { inHeader = false; continue; }
         if (line == "M30" || line == "M00") break;
 
-        // Detect non-circular holes (slots/routes)
-        if (line.substr(0, 3) == "G85" || line.substr(0, 3) == "M15" ||
-            line.substr(0, 3) == "M16" || line.substr(0, 3) == "M17") {
-            throw std::runtime_error(
-                "Non-circular hole detected in " + filepath + ": '" + line + "'\n"
-                "  The spindle can only plunge-drill, not mill slots or routes.");
-        }
+        // Rout mode (slots) — skip moves between M15..M16
+        if (line.substr(0, 3) == "M15") { inRoute = true;  continue; }
+        if (line.substr(0, 3) == "M16") { inRoute = false; continue; }
+        if (inRoute) continue;
+
+        // G85 slotted hole — skip (cannot mill with plunge drill)
+        if (line.substr(0, 3) == "G85") continue;
 
         if (line.find("METRIC") == 0) { isMetric = true; continue; }
         if (line.find("INCH") == 0)   { isMetric = false; continue; }

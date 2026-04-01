@@ -109,10 +109,14 @@ void generateDebugBMP(
     const Config& config,
     const std::vector<DrillHole>& holes)
 {
-    double beamSize = config.machine.laser_beam_diameter;
-    std::regex coordRe(R"(X([-\d.]+)\s*Y([-\d.]+))");
+    double toolSize = config.machine.engraver_tip_width;
+    if (toolSize <= 0) toolSize = 0.1; // fallback
+    double zCut = config.machine.engraver_z_cut;
 
-    // Pass 1: find coordinate bounds
+    std::regex coordRe(R"(X([-\d.]+)\s*Y([-\d.]+))");
+    std::regex zRe(R"(Z([-\d.]+))");
+
+    // Pass 1: find coordinate bounds (XY moves only)
     double minX = 1e18, minY = 1e18, maxX = -1e18, maxY = -1e18;
 
     {
@@ -130,17 +134,16 @@ void generateDebugBMP(
         }
     }
 
-    if (minX > 1e17) return; // No coordinates found
+    if (minX > 1e17) return;
 
     double margin = 1.0;
     minX -= margin; minY -= margin;
     maxX += margin; maxY += margin;
 
     double wMM = maxX - minX, hMM = maxY - minY;
-    int outW = (int)std::ceil(wMM / beamSize);
-    int outH = (int)std::ceil(hMM / beamSize);
+    int outW = (int)std::ceil(wMM / toolSize);
+    int outH = (int)std::ceil(hMM / toolSize);
 
-    // Cap output size
     if ((long long)outW * outH > 25000000LL) {
         double s = std::sqrt(25000000.0 / ((double)outW * outH));
         outW = (int)(outW * s);
@@ -149,42 +152,49 @@ void generateDebugBMP(
     if (outW < 10 || outH < 10) return;
 
     double effRes = wMM / outW;
-    int lineWidth = std::max(1, (int)std::round(beamSize / effRes));
+    int lineWidth = std::max(1, (int)std::round(toolSize / effRes));
 
-    // Allocate pixel buffer (bottom-up, BGR)
     std::vector<uint8_t> pixels(outW * outH * 3, 255); // white background
 
     auto toPx = [&](double x, double y, int& px, int& py) {
         px = (int)((x - minX) / effRes);
-        py = (outH - 1) - (int)((y - minY) / effRes); // flip Y for BMP bottom-up
+        py = (outH - 1) - (int)((y - minY) / effRes);
     };
 
-    // Pass 2: draw laser paths
+    // Pass 2: draw engraver paths (G1 moves at cutting Z)
     {
         std::ifstream f(gcodePath);
         if (!f.is_open()) return;
 
-        double curX = 0, curY = 0;
-        bool laserOn = false;
+        double curX = 0, curY = 0, curZ = 100;
         bool inDrill = false;
 
         std::string line;
         while (std::getline(f, line)) {
-            // Trim
             while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
                 line.pop_back();
 
-            if (line == "USE_LASER")   { inDrill = false; continue; }
-            if (line == "USE_SPINDLE") { inDrill = true; laserOn = false; continue; }
-            if (line.find("LASER_SET") == 0) { laserOn = true; continue; }
-            if (line == "LASER_OFF")   { laserOn = false; continue; }
+            // Detect drill section
+            if (line.find("; === Drilling") == 0) { inDrill = true; continue; }
+            if (line.find("; === Engraver") == 0) { inDrill = false; continue; }
 
+            // Parse Z changes
+            std::smatch zm;
+            if (std::regex_search(line, zm, zRe)) {
+                curZ = std::stod(zm[1].str());
+            }
+
+            // Parse XY moves
             std::smatch m;
             if (std::regex_search(line, m, coordRe)) {
                 double nx = std::stod(m[1].str());
                 double ny = std::stod(m[2].str());
 
-                if (laserOn && !inDrill) {
+                // Draw if Z is at cutting depth and not in drill section
+                bool cutting = (curZ <= zCut + 0.001) && !inDrill;
+                bool isG1 = (line.find("G1") != std::string::npos);
+
+                if (cutting && isG1) {
                     int x0, y0, x1, y1;
                     toPx(curX, curY, x0, y0);
                     toPx(nx, ny, x1, y1);
@@ -207,11 +217,9 @@ void generateDebugBMP(
             int cx, cy;
             toPx(h.x + xOff, h.y + yOff, cx, cy);
 
-            // Green: required hole diameter
             int rReq = std::max(3, (int)((h.diameter / 2.0) / effRes));
             drawCircle(pixels.data(), outW, outH, cx, cy, rReq, 0, 180, 0);
 
-            // Blue: tool diameter (overlaid)
             int rTool = std::max(2, (int)((toolD / 2.0) / effRes));
             drawCircle(pixels.data(), outW, outH, cx, cy, rTool, 0, 0, 255);
         }

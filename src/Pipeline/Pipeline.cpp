@@ -72,9 +72,8 @@ KicadFiles detectKicadFiles(const std::string& directory) {
 
 bool runPipeline(const PipelineParams& params, LogCallback log) {
     try {
-        // Load config
-        log("Loading config: " + baseName(params.configPath));
-        Config config = loadConfig(params.configPath);
+        // Use config from GUI
+        Config config = params.config;
 
         // Detect KiCad files
         log("Scanning directory: " + baseName(params.kicadDir));
@@ -93,10 +92,10 @@ bool runPipeline(const PipelineParams& params, LogCallback log) {
         }
 
         // Parse board outline
-        log("\xF0\x9F\x94\x8D Parsing Edge_Cuts...");
+        log("Parsing Edge_Cuts...");
         geo::Path outline = parseBoardOutline(kf.edgeCuts);
 
-        // Compute board dimensions from outline bounds
+        // Compute board bounds and normalize to (0,0)
         double minX = 1e18, minY = 1e18, maxX = -1e18, maxY = -1e18;
         for (auto& pt : outline) {
             minX = std::min(minX, pt.x); minY = std::min(minY, pt.y);
@@ -106,7 +105,15 @@ bool runPipeline(const PipelineParams& params, LogCallback log) {
         double boardH = maxY - minY;
         {
             char buf[128];
-            _snprintf(buf, sizeof(buf), "\xF0\x9F\x94\x8D Board size: %.1f x %.1f mm", boardW, boardH);
+            _snprintf(buf, sizeof(buf), "Board size: %.2f x %.2f mm", boardW, boardH);
+            log(buf);
+        }
+
+        // Translate outline to (0,0)
+        outline = geo::translate(outline, -minX, -minY);
+        {
+            char buf[128];
+            _snprintf(buf, sizeof(buf), "Board origin normalized from (%.2f, %.2f) to (0, 0)", minX, minY);
             log(buf);
         }
 
@@ -119,8 +126,10 @@ bool runPipeline(const PipelineParams& params, LogCallback log) {
         }
 
         // Parse copper
-        log("\xF0\x9F\x94\x8D Parsing " + baseName(kf.copper) + "...");
+        log("Parsing " + baseName(kf.copper) + "...");
         geo::Paths copper = parseGerber(kf.copper);
+        // Normalize copper to same origin
+        copper = geo::translateAll(copper, -minX, -minY);
         log("  " + std::to_string(copper.size()) + " copper regions parsed");
 
         // Parse drills
@@ -129,9 +138,14 @@ bool runPipeline(const PipelineParams& params, LogCallback log) {
             auto holes = parseDrill(drlPath);
             {
                 char buf[128];
-                _snprintf(buf, sizeof(buf), "\xF0\x9F\x94\x8D Parsing %s... %d holes",
+                _snprintf(buf, sizeof(buf), "Parsing %s... %d holes",
                          baseName(drlPath).c_str(), (int)holes.size());
                 log(buf);
+            }
+            // Normalize drill coordinates to board origin
+            for (auto& h : holes) {
+                h.x -= minX;
+                h.y -= minY;
             }
             allHoles.insert(allHoles.end(), holes.begin(), holes.end());
         }
@@ -156,7 +170,7 @@ bool runPipeline(const PipelineParams& params, LogCallback log) {
         if (undersized > 0) {
             char buf[128];
             _snprintf(buf, sizeof(buf),
-                "\xE2\x9A\xA0 %d hole(s) have diameter smaller than tool (%.1fmm)",
+                "Warning: %d hole(s) smaller than drill tool (%.1fmm)",
                 undersized, toolD);
             log(buf);
         }
@@ -164,7 +178,7 @@ bool runPipeline(const PipelineParams& params, LogCallback log) {
         // Flip for B_Cu
         bool doFlip = params.flip || kf.isBack;
         if (doFlip) {
-            log("  Flipping board (B_Cu)");
+            log("Flipping board (B_Cu)");
             copper = geo::flipX(copper, boardW);
             for (auto& h : allHoles)
                 h.x = boardW - h.x;
@@ -179,18 +193,18 @@ bool runPipeline(const PipelineParams& params, LogCallback log) {
 
         geo::Paths clearance = geo::difference(outlinePaths, copper);
 
-        // Generate toolpaths
-        log("\xF0\x9F\x94\xA5 Generating laser toolpath...");
-        auto contours = generateLaserToolpath(clearance, config);
+        // Generate engraver toolpaths
+        log("Generating engraver toolpath...");
+        auto contours = generateToolpath(clearance, config);
         {
             char buf[64];
-            _snprintf(buf, sizeof(buf), "\xF0\x9F\x94\xA5 %d contours generated", (int)contours.size());
+            _snprintf(buf, sizeof(buf), "%d contours generated", (int)contours.size());
             log(buf);
         }
 
         if (!allHoles.empty()) {
             char buf[64];
-            _snprintf(buf, sizeof(buf), "\xF0\x9F\x94\xA9 Optimizing drill order... %d holes", (int)allHoles.size());
+            _snprintf(buf, sizeof(buf), "Optimizing drill order... %d holes", (int)allHoles.size());
             log(buf);
             allHoles = orderDrillHoles(allHoles);
         }
@@ -201,7 +215,7 @@ bool runPipeline(const PipelineParams& params, LogCallback log) {
         for (char c : gcode) if (c == '\n') nLines++;
         {
             char buf[128];
-            _snprintf(buf, sizeof(buf), "\xF0\x9F\x93\x9D Writing %s... %d lines",
+            _snprintf(buf, sizeof(buf), "Writing %s... %d lines",
                      baseName(params.outputPath).c_str(), nLines);
             log(buf);
         }
@@ -220,24 +234,24 @@ bool runPipeline(const PipelineParams& params, LogCallback log) {
         {
             char buf[64];
             if (hours > 0)
-                _snprintf(buf, sizeof(buf), "\xE2\x8F\xB1 Estimated job time: %dh %dm %ds", hours, mins, secs);
+                _snprintf(buf, sizeof(buf), "Estimated job time: %dh %dm %ds", hours, mins, secs);
             else
-                _snprintf(buf, sizeof(buf), "\xE2\x8F\xB1 Estimated job time: %dm %ds", mins, secs);
+                _snprintf(buf, sizeof(buf), "Estimated job time: %dm %ds", mins, secs);
             log(buf);
         }
 
         // Debug image
         if (!params.debugPath.empty()) {
-            log("\xF0\x9F\x96\xBC Generating debug image...");
+            log("Generating debug image...");
             generateDebugBMP(params.outputPath, params.debugPath, config, allHoles);
-            log("\xF0\x9F\x96\xBC Saved " + baseName(params.debugPath));
+            log("Saved " + baseName(params.debugPath));
         }
 
-        log("\xE2\x9C\x85 Done!");
+        log("Done!");
         return true;
 
     } catch (const std::exception& e) {
-        log(std::string("\xE2\x9D\x8C Error: ") + e.what());
+        log(std::string("Error: ") + e.what());
         return false;
     }
 }

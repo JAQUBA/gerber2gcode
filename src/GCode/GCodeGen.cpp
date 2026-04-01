@@ -63,7 +63,7 @@ static std::string fmtS(double s) {
     return buf;
 }
 
-// ── GCode generation ─────────────────────────────────────────────────────────
+// ── GCode generation (CNC engraver mode) ─────────────────────────────────────
 
 std::string generateGCode(
     const std::vector<ToolpathContour>& contours,
@@ -74,6 +74,9 @@ std::string generateGCode(
     auto& mc  = config.machine;
     auto& job = config.job;
 
+    double zTravel = mc.engraver_z_travel;
+    double zCut    = mc.engraver_z_cut;
+
     // Validate all coordinates within machine bounds
     std::vector<std::string> oob;
     for (auto& contour : contours) {
@@ -81,7 +84,7 @@ std::string generateGCode(
             double fx = pt.x + xOffset, fy = pt.y + yOffset;
             if (fx < 0 || fx > mc.x_size || fy < 0 || fy > mc.y_size) {
                 char buf[80];
-                _snprintf(buf, sizeof(buf), "laser (%.4f, %.4f)", fx, fy);
+                _snprintf(buf, sizeof(buf), "engrave (%.4f, %.4f)", fx, fy);
                 oob.push_back(buf);
                 break;
             }
@@ -107,72 +110,65 @@ std::string generateGCode(
     std::ostringstream out;
     out << std::fixed << std::setprecision(4);
 
-    out << "; init printer\n";
-    out << "G28\n";
-    out << "G21\n";
-    out << "G90\n";
+    out << "; gerber2gcode — CNC PCB isolation engraving\n";
+    out << "G21 ; mm\n";
+    out << "G90 ; absolute\n";
     out << "\n";
 
+    // ── Engraver isolation milling ───────────────────────────────────────
     if (!contours.empty()) {
-        out << "; start lasering\n";
-        out << "USE_LASER\n";
-        out << "G0 " << fmtZ(mc.laser_z) << " " << fmtF(mc.move_feedrate) << "\n";
+        out << "; === Engraver: isolation milling ===\n";
+        out << "G0 " << fmtZ(zTravel) << "\n";
 
         for (auto& contour : contours) {
             if (contour.points.empty()) continue;
             auto& pts = contour.points;
             double sx = pts[0].x, sy = pts[0].y;
 
-            out << "G1 " << fmtXY(sx, sy, xOffset, yOffset) << " "
-                << fmtF(mc.move_feedrate) << "\n";
-            out << "LASER_SET " << fmtS(job.laser_power) << "\n";
+            // Rapid to start position
+            out << "G0 " << fmtXY(sx, sy, xOffset, yOffset) << "\n";
+            // Plunge to cutting depth
+            out << "G1 " << fmtZ(zCut) << " " << fmtF(job.engraver_feedrate / 2.0) << "\n";
 
+            // Cut contour
             for (size_t i = 1; i < pts.size(); i++) {
                 out << "G1 " << fmtXY(pts[i].x, pts[i].y, xOffset, yOffset) << " "
-                    << fmtF(job.laser_feedrate) << "\n";
+                    << fmtF(job.engraver_feedrate) << "\n";
             }
             // Close contour
             out << "G1 " << fmtXY(sx, sy, xOffset, yOffset) << " "
-                << fmtF(job.laser_feedrate) << "\n";
-            out << "LASER_OFF\n";
+                << fmtF(job.engraver_feedrate) << "\n";
+            // Retract
+            out << "G0 " << fmtZ(zTravel) << "\n";
         }
 
-        out << "LASER_OFF\n";
-        out << "G28\n";
         out << "\n";
     }
 
+    // ── Drilling ─────────────────────────────────────────────────────────
     if (!holes.empty()) {
-        out << "; start drilling\n";
-        out << "USE_SPINDLE\n";
-        out << "G0 " << fmtZ(mc.spindle_z_home) << " " << fmtF(mc.move_feedrate) << "\n";
-
-        // Spindle ramp-up
-        char sBuf[40];
-        _snprintf(sBuf, sizeof(sBuf), "S=%.4f", job.spindle_power / 2.0);
-        out << "SPINDLE_SET " << sBuf << "\n";
-        out << "G4 P5000\n";
-        _snprintf(sBuf, sizeof(sBuf), "S=%.4f", job.spindle_power);
-        out << "SPINDLE_SET " << sBuf << "\n";
+        out << "; === Drilling ===\n";
+        out << "; NOTE: Change to drill bit manually\n";
+        out << "G0 " << fmtZ(mc.spindle_z_home) << "\n";
 
         for (auto& hole : holes) {
-            out << "G0 " << fmtXY(hole.x, hole.y, xOffset, yOffset) << " "
-                << fmtF(mc.move_feedrate) << "\n";
+            out << "G0 " << fmtXY(hole.x, hole.y, xOffset, yOffset) << "\n";
             out << "G1 " << fmtZ(mc.spindle_z_pre_drill) << " "
                 << fmtF(mc.move_feedrate) << "\n";
             out << "G1 " << fmtZ(mc.spindle_z_drill) << " "
                 << fmtF(job.spindle_feedrate) << "\n";
             out << "G1 " << fmtZ(mc.spindle_z_pre_drill) << " "
                 << fmtF(job.spindle_feedrate) << "\n";
-            out << "G1 " << fmtZ(mc.spindle_z_home) << " "
-                << fmtF(mc.move_feedrate) << "\n";
+            out << "G0 " << fmtZ(mc.spindle_z_home) << "\n";
         }
 
-        out << "SPINDLE_OFF\n";
-        out << "G28\n";
+        out << "\n";
     }
 
-    out << "\n";
+    out << "G0 " << fmtZ(mc.engraver_z_travel) << " ; safe Z\n";
+    out << "G0 X0 Y0 ; return home\n";
+    out << "M84 ; motors off\n";
+
     return out.str();
 }
 
@@ -188,32 +184,38 @@ double estimateJobTime(
     double total = 0.0;
 
     double prevX = 0, prevY = 0;
+    double engFeed = job.engraver_feedrate > 0 ? job.engraver_feedrate : 300.0;
+
     for (auto& contour : contours) {
         if (contour.points.empty()) continue;
         double sx = contour.points[0].x, sy = contour.points[0].y;
+        // Rapid to start
         total += std::hypot(sx - prevX, sy - prevY) / (mc.move_feedrate / 60.0);
+        // Plunge + retract
+        double zDelta = std::abs(mc.engraver_z_travel - mc.engraver_z_cut);
+        total += 2.0 * zDelta / (engFeed / 2.0 / 60.0);
 
-        double lase = 0.0;
+        // Cut path
+        double cutLen = 0.0;
         double px = sx, py = sy;
         for (size_t i = 1; i < contour.points.size(); i++) {
             double cx = contour.points[i].x, cy = contour.points[i].y;
-            lase += std::hypot(cx - px, cy - py);
+            cutLen += std::hypot(cx - px, cy - py);
             px = cx; py = cy;
         }
-        lase += std::hypot(sx - px, sy - py);
-        total += lase / (job.laser_feedrate / 60.0);
+        cutLen += std::hypot(sx - px, sy - py);
+        total += cutLen / (engFeed / 60.0);
         prevX = sx; prevY = sy;
     }
 
     if (!holes.empty()) {
-        total += 5.0; // Spindle ramp-up
         prevX = 0; prevY = 0;
         for (auto& h : holes) {
             total += std::hypot(h.x - prevX, h.y - prevY) / (mc.move_feedrate / 60.0);
-            total += (mc.spindle_z_home - mc.spindle_z_pre_drill) / (mc.move_feedrate / 60.0);
-            total += (mc.spindle_z_pre_drill - mc.spindle_z_drill) / (job.spindle_feedrate / 60.0);
-            total += (mc.spindle_z_pre_drill - mc.spindle_z_drill) / (job.spindle_feedrate / 60.0);
-            total += (mc.spindle_z_home - mc.spindle_z_pre_drill) / (mc.move_feedrate / 60.0);
+            total += std::abs(mc.spindle_z_home - mc.spindle_z_pre_drill) / (mc.move_feedrate / 60.0);
+            total += std::abs(mc.spindle_z_pre_drill - mc.spindle_z_drill) / (job.spindle_feedrate / 60.0);
+            total += std::abs(mc.spindle_z_pre_drill - mc.spindle_z_drill) / (job.spindle_feedrate / 60.0);
+            total += std::abs(mc.spindle_z_home - mc.spindle_z_pre_drill) / (mc.move_feedrate / 60.0);
             prevX = h.x; prevY = h.y;
         }
     }
