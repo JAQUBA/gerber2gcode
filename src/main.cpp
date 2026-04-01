@@ -1,7 +1,6 @@
-// gerber2gcode — Laser PCB GCode Generator
-// GUI wrapper for flatcum using JQB_WindowsLib
-//
-// Calls the Python flatcum CLI as a subprocess and displays output in real-time.
+// gerber2gcode — Native Laser PCB GCode Generator
+// Converts KiCad Gerber/drill files to Klipper GCode for laser etching and drilling.
+// All processing done natively in C++ (Gerber parser, Clipper2 geometry, toolpath gen).
 
 #include <Core.h>
 #include <UI/SimpleWindow/SimpleWindow.h>
@@ -13,6 +12,8 @@
 #include <UI/ProgressBar/ProgressBar.h>
 #include <Util/ConfigManager.h>
 #include <Util/StringUtils.h>
+
+#include "Pipeline/Pipeline.h"
 
 #include <windows.h>
 #include <commdlg.h>
@@ -40,7 +41,6 @@ static const int CH = 24;              // control height
 static SimpleWindow*  window         = nullptr;
 static ConfigManager* settings       = nullptr;
 
-static InputField*    fldFlatcumCmd  = nullptr;
 static InputField*    fldKicadDir    = nullptr;
 static InputField*    fldConfigFile  = nullptr;
 static InputField*    fldOutputFile  = nullptr;
@@ -121,24 +121,11 @@ static std::string browseFolderUTF8(const wchar_t* title) {
 // Helpers
 // ════════════════════════════════════════════════════════════════════════════
 
-static std::string stripAnsiCodes(const std::string& text) {
-    std::string out;
-    out.reserve(text.size());
-    bool esc = false;
-    for (char c : text) {
-        if (c == '\033')  { esc = true; }
-        else if (esc)     { if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) esc = false; }
-        else              { out += c; }
-    }
-    return out;
-}
-
 static void logMsg(const std::string& msg) {
     logArea->append(msg + "\r\n");
 }
 
 static void saveSettings() {
-    settings->setValue("flatcum_cmd",  fldFlatcumCmd->getText());
     settings->setValue("kicad_dir",    fldKicadDir->getText());
     settings->setValue("config_file",  fldConfigFile->getText());
     settings->setValue("output_file",  fldOutputFile->getText());
@@ -150,8 +137,6 @@ static void saveSettings() {
 }
 
 static void loadSettings() {
-    fldFlatcumCmd->setText(
-        settings->getValue("flatcum_cmd", "python -m flatcum").c_str());
     fldKicadDir->setText(
         settings->getValue("kicad_dir", "").c_str());
     fldConfigFile->setText(
@@ -171,36 +156,37 @@ static void loadSettings() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Subprocess execution (runs on background thread)
+// Native pipeline execution (runs on background thread)
 // ════════════════════════════════════════════════════════════════════════════
 
 static void doGenerate() {
-    // Snapshot UI values (thread-safe via SendMessage inside getText)
-    std::string cmd        = fldFlatcumCmd->getText();
     std::string kicadDir   = fldKicadDir->getText();
     std::string configFile = fldConfigFile->getText();
     std::string outputFile = fldOutputFile->getText();
-    std::string xOffset    = fldXOffset->getText();
-    std::string yOffset    = fldYOffset->getText();
+    std::string xOffStr    = fldXOffset->getText();
+    std::string yOffStr    = fldYOffset->getText();
     bool flip              = chkFlip->isChecked();
     bool ignoreVia         = chkIgnoreVia->isChecked();
     bool debugImg          = chkDebug->isChecked();
 
-    // ── Validate ──
-    if (cmd.empty())        { logMsg("Error: Flatcum command not set.");        return; }
+    // Validate
     if (kicadDir.empty())   { logMsg("Error: KiCad directory not selected.");   return; }
     if (configFile.empty()) { logMsg("Error: Config JSON not selected.");       return; }
     if (outputFile.empty()) { logMsg("Error: Output file not selected.");       return; }
 
-    // ── Build command line ──
-    std::string cmdLine = cmd + " convert-kicad"
-        " \"" + configFile + "\""
-        " \"" + kicadDir   + "\""
-        " -o \"" + outputFile + "\""
-        " -v";
+    PipelineParams params;
+    params.configPath = configFile;
+    params.kicadDir   = kicadDir;
+    params.outputPath = outputFile;
+    params.flip       = flip;
+    params.ignoreVia  = ignoreVia;
 
-    if (flip)      cmdLine += " --flip";
-    if (ignoreVia) cmdLine += " --ignore-via";
+    if (!xOffStr.empty()) {
+        try { params.xOffset = std::stod(xOffStr); } catch (...) {}
+    }
+    if (!yOffStr.empty()) {
+        try { params.yOffset = std::stod(yOffStr); } catch (...) {}
+    }
 
     g_lastDebugPath.clear();
     if (debugImg) {
@@ -208,90 +194,48 @@ static void doGenerate() {
         size_t dot = dbg.rfind('.');
         if (dot != std::string::npos)
             dbg = dbg.substr(0, dot);
-        dbg += "_debug.png";
-        cmdLine += " --debug \"" + dbg + "\"";
+        dbg += "_debug.bmp";
+        params.debugPath = dbg;
         g_lastDebugPath = dbg;
     }
 
-    if (!xOffset.empty()) cmdLine += " --x-offset " + xOffset;
-    if (!yOffset.empty()) cmdLine += " --y-offset " + yOffset;
-
-    logMsg("$ " + cmdLine);
+    logMsg("=== Starting native GCode generation ===");
     logMsg("");
 
-    // ── Create pipe for stdout+stderr capture ──
-    SECURITY_ATTRIBUTES sa = {};
-    sa.nLength        = sizeof(sa);
-    sa.bInheritHandle = TRUE;
-
-    HANDLE hRead = NULL, hWrite = NULL;
-    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
-        logMsg("Error: CreatePipe failed.");
-        return;
-    }
-    SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
-
-    // ── Launch process ──
-    STARTUPINFOW si = {};
-    si.cb         = sizeof(si);
-    si.hStdOutput = hWrite;
-    si.hStdError  = hWrite;
-    si.dwFlags    = STARTF_USESTDHANDLES;
-
-    PROCESS_INFORMATION pi = {};
-    std::wstring wCmd = StringUtils::utf8ToWide(cmdLine);
-    std::vector<wchar_t> cmdBuf(wCmd.begin(), wCmd.end());
-    cmdBuf.push_back(L'\0');
-
-    BOOL ok = CreateProcessW(
-        NULL, cmdBuf.data(), NULL, NULL, TRUE,
-        CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-    CloseHandle(hWrite);
-
-    if (!ok) {
-        DWORD err = GetLastError();
-        logMsg("Error: Could not start process (code "
-               + std::to_string(err) + ").");
-        logMsg("Check that the Flatcum command is correct and Python is on PATH.");
-        CloseHandle(hRead);
-        return;
-    }
-
-    // ── Stream output to log ──
-    char buf[4096];
-    DWORD bytesRead;
-    while (ReadFile(hRead, buf, sizeof(buf) - 1, &bytesRead, NULL)
-           && bytesRead > 0)
-    {
-        buf[bytesRead] = '\0';
-        std::string text = stripAnsiCodes(std::string(buf, bytesRead));
-        logArea->append(text);
-    }
-
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD exitCode = 1;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
-
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    CloseHandle(hRead);
+    bool ok = runPipeline(params, [](const std::string& msg) {
+        logMsg(msg);
+    });
 
     logMsg("");
-    if (exitCode == 0)
-        logMsg("=== Done! ===");
+    if (ok)
+        logMsg("=== Generation complete ===");
     else
-        logMsg("=== Failed (exit code "
-               + std::to_string(exitCode) + ") ===");
+        logMsg("=== Generation failed ===");
 }
 
 static DWORD WINAPI generateThread(LPVOID) {
     doGenerate();
-
     progressBar->setMarquee(false);
     progressBar->setProgress(0);
     EnableWindow(btnGenerate->getHandle(), TRUE);
     g_isRunning = false;
     return 0;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Button styling helper
+// ════════════════════════════════════════════════════════════════════════════
+
+static void styleBrowseButton(Button* btn) {
+    btn->setBackColor(RGB(58, 58, 70));
+    btn->setTextColor(RGB(200, 200, 210));
+    btn->setHoverColor(RGB(72, 72, 88));
+}
+
+static void styleLabel(Label* lbl) {
+    lbl->setFont(L"Segoe UI", 11);
+    lbl->setTextColor(RGB(170, 175, 185));
+    lbl->setBackColor(RGB(45, 45, 54));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -303,7 +247,7 @@ void init() {
 }
 
 void setup() {
-    window = new SimpleWindow(960, 720, "gerber2gcode", 0);
+    window = new SimpleWindow(960, 690, "gerber2gcode", 0);
     window->init();
     window->setBackgroundColor(RGB(45, 45, 54));
     window->setTextColor(RGB(220, 220, 230));
@@ -319,52 +263,34 @@ void setup() {
     title->setTextColor(RGB(230, 235, 243));
     title->setBackColor(RGB(45, 45, 54));
 
-    // ── Row 1: Flatcum Command ───────────────────────────────────────────
+    // ── Row 1: KiCad Directory ───────────────────────────────────────────
 
-    Label* lblCmd = new Label(LX, 52, 155, 20, L"Flatcum Command:");
-    window->add(lblCmd);
-    lblCmd->setFont(L"Segoe UI", 11);
-    lblCmd->setTextColor(RGB(170, 175, 185));
-    lblCmd->setBackColor(RGB(45, 45, 54));
-
-    fldFlatcumCmd = new InputField(IX, 50, IW + BW + 10, CH,
-        "python -m flatcum");
-    window->add(fldFlatcumCmd);
-
-    // ── Row 2: KiCad Directory ───────────────────────────────────────────
-
-    Label* lblKicad = new Label(LX, 82, 155, 20, L"KiCad Directory:");
+    Label* lblKicad = new Label(LX, 52, 155, 20, L"KiCad Directory:");
     window->add(lblKicad);
-    lblKicad->setFont(L"Segoe UI", 11);
-    lblKicad->setTextColor(RGB(170, 175, 185));
-    lblKicad->setBackColor(RGB(45, 45, 54));
+    styleLabel(lblKicad);
 
-    fldKicadDir = new InputField(IX, 80, IW, CH);
+    fldKicadDir = new InputField(IX, 50, IW, CH);
     window->add(fldKicadDir);
 
-    Button* btnBrowseKicad = new Button(BX, 80, BW, CH,
+    Button* btnBrowseKicad = new Button(BX, 50, BW, CH,
         "Browse...", [](Button*) {
             std::string p = browseFolderUTF8(
                 L"Select KiCad Gerber output directory");
             if (!p.empty()) fldKicadDir->setText(p.c_str());
         });
     window->add(btnBrowseKicad);
-    btnBrowseKicad->setBackColor(RGB(58, 58, 70));
-    btnBrowseKicad->setTextColor(RGB(200, 200, 210));
-    btnBrowseKicad->setHoverColor(RGB(72, 72, 88));
+    styleBrowseButton(btnBrowseKicad);
 
-    // ── Row 3: Config JSON ───────────────────────────────────────────────
+    // ── Row 2: Config JSON ───────────────────────────────────────────────
 
-    Label* lblConfig = new Label(LX, 112, 155, 20, L"Config JSON:");
+    Label* lblConfig = new Label(LX, 82, 155, 20, L"Config JSON:");
     window->add(lblConfig);
-    lblConfig->setFont(L"Segoe UI", 11);
-    lblConfig->setTextColor(RGB(170, 175, 185));
-    lblConfig->setBackColor(RGB(45, 45, 54));
+    styleLabel(lblConfig);
 
-    fldConfigFile = new InputField(IX, 110, IW, CH);
+    fldConfigFile = new InputField(IX, 80, IW, CH);
     window->add(fldConfigFile);
 
-    Button* btnBrowseConfig = new Button(BX, 110, BW, CH,
+    Button* btnBrowseConfig = new Button(BX, 80, BW, CH,
         "Browse...", [](Button*) {
             std::string p = openFileDialogUTF8(
                 L"JSON (*.json)\0*.json\0All (*.*)\0*.*\0",
@@ -372,22 +298,18 @@ void setup() {
             if (!p.empty()) fldConfigFile->setText(p.c_str());
         });
     window->add(btnBrowseConfig);
-    btnBrowseConfig->setBackColor(RGB(58, 58, 70));
-    btnBrowseConfig->setTextColor(RGB(200, 200, 210));
-    btnBrowseConfig->setHoverColor(RGB(72, 72, 88));
+    styleBrowseButton(btnBrowseConfig);
 
-    // ── Row 4: Output GCode ──────────────────────────────────────────────
+    // ── Row 3: Output GCode ──────────────────────────────────────────────
 
-    Label* lblOutput = new Label(LX, 142, 155, 20, L"Output GCode:");
+    Label* lblOutput = new Label(LX, 112, 155, 20, L"Output GCode:");
     window->add(lblOutput);
-    lblOutput->setFont(L"Segoe UI", 11);
-    lblOutput->setTextColor(RGB(170, 175, 185));
-    lblOutput->setBackColor(RGB(45, 45, 54));
+    styleLabel(lblOutput);
 
-    fldOutputFile = new InputField(IX, 140, IW, CH);
+    fldOutputFile = new InputField(IX, 110, IW, CH);
     window->add(fldOutputFile);
 
-    Button* btnBrowseOutput = new Button(BX, 140, BW, CH,
+    Button* btnBrowseOutput = new Button(BX, 110, BW, CH,
         "Save As...", [](Button*) {
             std::string p = saveFileDialogUTF8(
                 L"GCode (*.gcode)\0*.gcode\0All (*.*)\0*.*\0",
@@ -395,13 +317,11 @@ void setup() {
             if (!p.empty()) fldOutputFile->setText(p.c_str());
         });
     window->add(btnBrowseOutput);
-    btnBrowseOutput->setBackColor(RGB(58, 58, 70));
-    btnBrowseOutput->setTextColor(RGB(200, 200, 210));
-    btnBrowseOutput->setHoverColor(RGB(72, 72, 88));
+    styleBrowseButton(btnBrowseOutput);
 
-    // ── Row 5: Options ───────────────────────────────────────────────────
+    // ── Row 4: Options ───────────────────────────────────────────────────
 
-    int oy = 178;
+    int oy = 148;
 
     Label* lblXOff = new Label(LX, oy + 2, 95, 20, L"X Offset (mm):");
     window->add(lblXOff);
@@ -430,7 +350,7 @@ void setup() {
 
     // ── Generate button ──────────────────────────────────────────────────
 
-    btnGenerate = new Button(IX, 215, IW, 38,
+    btnGenerate = new Button(IX, 185, IW, 38,
         "Generate GCode", [](Button*) {
             if (g_isRunning) return;
             g_isRunning = true;
@@ -448,13 +368,13 @@ void setup() {
 
     // ── Progress bar ─────────────────────────────────────────────────────
 
-    progressBar = new ProgressBar(IX, 258, IW, 5);
+    progressBar = new ProgressBar(IX, 228, IW, 5);
     window->add(progressBar);
     progressBar->setColor(RGB(0, 180, 80));
 
     // ── Log area ─────────────────────────────────────────────────────────
 
-    logArea = new TextArea(LX, 272, 930, 383);
+    logArea = new TextArea(LX, 242, 930, 380);
     window->add(logArea);
     logArea->setFont(L"Consolas", 10, false);
     logArea->setTextColor(RGB(185, 195, 205));
@@ -462,7 +382,7 @@ void setup() {
 
     // ── Bottom buttons ───────────────────────────────────────────────────
 
-    btnOpenFolder = new Button(LX, 664, 175, 30,
+    btnOpenFolder = new Button(LX, 632, 175, 30,
         "Open Output Folder", [](Button*) {
             std::string path = fldOutputFile->getText();
             if (path.empty()) return;
@@ -474,11 +394,9 @@ void setup() {
                 NULL, NULL, SW_SHOW);
         });
     window->add(btnOpenFolder);
-    btnOpenFolder->setBackColor(RGB(58, 58, 70));
-    btnOpenFolder->setTextColor(RGB(200, 200, 210));
-    btnOpenFolder->setHoverColor(RGB(72, 72, 88));
+    styleBrowseButton(btnOpenFolder);
 
-    btnPreview = new Button(200, 664, 185, 30,
+    btnPreview = new Button(200, 632, 185, 30,
         "Preview Debug Image", [](Button*) {
             if (g_lastDebugPath.empty()) {
                 MessageBoxW(window->getHandle(),
@@ -492,20 +410,19 @@ void setup() {
                 NULL, NULL, SW_SHOW);
         });
     window->add(btnPreview);
-    btnPreview->setBackColor(RGB(58, 58, 70));
-    btnPreview->setTextColor(RGB(200, 200, 210));
-    btnPreview->setHoverColor(RGB(72, 72, 88));
+    styleBrowseButton(btnPreview);
 
     // ── Load saved settings ──────────────────────────────────────────────
 
     loadSettings();
 
-    logMsg("Ready. Configure paths above, then click Generate GCode.");
+    logMsg("gerber2gcode - Native Laser PCB GCode Generator");
+    logMsg("Converts KiCad Gerber/drill files to Klipper GCode.");
     logMsg("");
-    logMsg("Flatcum command examples:");
-    logMsg("  python -m flatcum          (if flatcum installed via pip)");
-    logMsg("  uv run flatcum             (if using uv in flatcum project)");
-    logMsg("  uv run --project C:\\path\\to\\flatcum flatcum");
+    logMsg("1. Select KiCad Gerber output directory (with .gbr/.drl files)");
+    logMsg("2. Select config.json (machine/cam/job parameters)");
+    logMsg("3. Choose output .gcode file path");
+    logMsg("4. Click Generate GCode");
 }
 
 void loop() {
