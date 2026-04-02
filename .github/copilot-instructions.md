@@ -162,6 +162,20 @@ After parsing, the pipeline normalizes coordinates so the board origin is at (0,
 
 ## G-Code Engine
 
+### Z Coordinate Model
+
+Z=0 is the **machine bed** (table surface). The PCB laminate sits on the bed:
+
+| Z Position | Description | Example (mat=1.5, depth=0.05, safe=5.0) |
+|-----------|-------------|------------------------------------------|
+| `materialThickness + safeHeight` | Safe rapid travel | Z6.500 |
+| `materialThickness` | Top surface of PCB copper | Z1.500 |
+| `materialThickness - engravingDepth` | Isolation cut depth | Z1.450 |
+| `max(0, materialThickness - drillDepth)` | Drill depth (clamped to bed) | Z0.000 |
+| 0 | Cutout final depth (bed level) | Z0.000 |
+
+All user-entered depth values are **positive** (e.g., engravingDepth=0.05, drillDepth=2.0). The engine computes actual Z from `materialThickness`.
+
 ### Output Format (GRBL-compatible)
 
 ```gcode
@@ -170,20 +184,20 @@ G21 ; mm
 G90 ; absolute
 
 ; === Engraver: isolation milling ===
-G0 Z5.000
+G0 Z6.5000
 G0 X10.000 Y20.000       ; rapid to contour start
-G1 Z-0.050 F150          ; plunge at half feed
+G1 Z1.4500 F150          ; plunge at half feed
 G1 X15.000 Y20.000 F300  ; cut
-G0 Z5.000                ; retract
+G0 Z6.5000               ; retract
 
 ; === Drilling ===
 G0 X5.000 Y10.000
-G1 Z1.000 F2400          ; approach (pre-drill Z)
-G1 Z-2.000 F50           ; drill plunge
-G1 Z1.000 F50            ; retract
-G0 Z5.000                ; safe height
+G1 Z2.5000 F2400         ; approach (pre-drill Z)
+G1 Z0.0000 F50           ; drill plunge (through material to bed)
+G1 Z2.5000 F50           ; retract
+G0 Z6.5000               ; safe height
 
-G0 Z5.000
+G0 Z6.5000
 G0 X0 Y0
 M84 ; motors off
 ```
@@ -193,14 +207,14 @@ When cutout is enabled, an additional section is appended after drilling:
 ```gcode
 ; === Cutout ===
 G0 X10.000 Y0.000         ; rapid to cutout start
-G1 Z-0.500 F150           ; plunge to first pass depth
+G1 Z1.0000 F150           ; plunge to first pass depth (from material top)
 G1 X50.000 Y0.000 F300    ; cut along outline
 G1 X50.000 Y40.000 F300
 ...
-G0 Z5.000                 ; retract after final pass
+G0 Z6.5000                ; retract after final pass
 ```
 
-Cutout uses multi-pass depth: starts at Z=0, descends by `cutout_z_cut` each pass until reaching `cutout_z_final` (material thickness). The cutout path is the board outline offset outward by `tool_radius + cutout_offset`.
+Cutout uses multi-pass depth: starts at Z=materialThickness, descends by `cutout_z_step` each pass until reaching Z=0 (bed level). The cutout path is the board outline offset outward by `tool_radius + cutout_offset`.
 
 ### Drill Optimization
 
@@ -266,15 +280,15 @@ Steps 1–7 only — returns `PipelineResult` with parsed geometry for immediate
 | `kicad_dir` | Last KiCad project directory | (empty) |
 | `output_file` | Last output G-Code path | (empty) |
 | `tip_width` | Engraver tip width (mm) | `0.20` |
-| `z_cut` | Engraver cut depth (mm, negative) | `-0.05` |
-| `z_travel` | Engraver safe travel height (mm) | `5.00` |
+| `z_cut` | Engraving depth into material (mm, positive) | `0.05` |
+| `z_travel` | Safe clearance height above material (mm) | `5.00` |
 | `feed_xy` | Engraver XY feed rate (mm/min) | `300` |
 | `feed_z` | Engraver Z plunge feed rate (mm/min) | `100` |
 | `overlap` | Pass-to-pass overlap ratio (0–1) | `0.40` |
 | `offset` | Safety offset from copper edge (mm) | `0.00` |
-| `material` | Material thickness (mm) | `1.60` |
+| `material` | Material thickness (mm); Z=0 at bed, top at Z=material | `1.50` |
 | `x_offset` / `y_offset` | Board placement offset (mm) | `0.00` |
-| `z_drill` | Drill plunge depth (mm, negative) | `-2.00` |
+| `z_drill` | Drill depth from top (mm, positive; clamped to Z>=0) | `2.00` |
 | `drill_dia` | Drill tool diameter (mm) | `0.80` |
 | `drill_feed` | Drill plunge feed rate (mm/min) | `50` |
 | `flip` | Mirror board for bottom layer | `0` |
@@ -291,24 +305,46 @@ Steps 1–7 only — returns `PipelineResult` with parsed geometry for immediate
 | `tool_count` | Number of tool presets |
 | `tool_N_name` | Preset name |
 | `tool_N_toolDiameter` | Tool diameter (mm) |
-| `tool_N_cutDepth` | Cut depth (mm, negative) |
+| `tool_N_cutDepth` | Engraving depth (mm, positive) |
 | `tool_N_safeHeight` | Safe travel height (mm) |
 | `tool_N_feedXY` | XY feed rate (mm/min) |
 | `tool_N_feedZ` | Z plunge feed rate (mm/min) |
-| `tool_N_zDrill` | Drill depth (mm, negative) |
+| `tool_N_zDrill` | Drill depth from top (mm, positive) |
 | `tool_N_drillFeed` | Drill feed rate (mm/min) |
 | `active_tool` | Active preset index |
 
-### Default Tool Presets (6)
+### Default Tool Presets (28)
 
 | Name | Diameter | Cut Depth | Safe H | Feed XY | Feed Z | Z Drill | Drill Feed |
 |------|----------|-----------|--------|---------|--------|---------|------------|
-| V-bit 20deg 0.1mm | 0.1 | -0.05 | 5.0 | 200 | 50 | -2.0 | 50 |
-| V-bit 30deg 0.2mm | 0.2 | -0.05 | 5.0 | 300 | 100 | -2.0 | 50 |
-| End mill 0.8mm | 0.8 | -0.15 | 5.0 | 400 | 100 | -2.0 | 80 |
-| End mill 1.0mm | 1.0 | -0.20 | 5.0 | 400 | 100 | -2.0 | 80 |
-| Drill 0.8mm | 0.8 | -2.00 | 5.0 | 300 | 50 | -2.0 | 50 |
-| Drill 1.0mm | 1.0 | -2.00 | 5.0 | 300 | 50 | -2.0 | 50 |
+| V-bit 10deg 0.05mm | 0.05 | 0.03 | 5.0 | 150 | 30 | 2.0 | 60 |
+| V-bit 20deg 0.10mm | 0.10 | 0.05 | 5.0 | 200 | 50 | 2.0 | 60 |
+| V-bit 30deg 0.08mm (0.003in) | 0.08 | 0.05 | 5.0 | 220 | 50 | 2.0 | 60 |
+| V-bit 30deg 0.10mm | 0.10 | 0.06 | 5.0 | 250 | 60 | 2.0 | 60 |
+| V-bit 30deg 0.13mm (0.005in) | 0.13 | 0.08 | 5.0 | 280 | 70 | 2.0 | 60 |
+| V-bit 30deg 0.20mm | 0.20 | 0.10 | 5.0 | 300 | 80 | 2.0 | 60 |
+| V-bit 45deg 0.20mm | 0.20 | 0.10 | 5.0 | 350 | 80 | 2.0 | 60 |
+| V-bit 60deg 0.30mm | 0.30 | 0.15 | 5.0 | 350 | 100 | 2.0 | 60 |
+| End mill 0.40mm (1/64in) | 0.40 | 0.10 | 5.0 | 220 | 60 | 2.0 | 60 |
+| End mill 0.60mm | 0.60 | 0.12 | 5.0 | 280 | 70 | 2.0 | 60 |
+| End mill 0.80mm (1/32in) | 0.80 | 0.15 | 5.0 | 400 | 100 | 2.0 | 60 |
+| End mill 1.00mm | 1.00 | 0.20 | 5.0 | 420 | 100 | 2.0 | 60 |
+| End mill 1.20mm | 1.20 | 0.25 | 5.0 | 450 | 110 | 2.0 | 60 |
+| Cutout mill 1.60mm (1/16in) | 1.60 | 0.35 | 5.0 | 500 | 120 | 2.0 | 60 |
+| End mill 2.00mm | 2.00 | 0.40 | 5.0 | 550 | 120 | 2.0 | 60 |
+| End mill 3.20mm (1/8in) | 3.20 | 0.60 | 5.0 | 700 | 180 | 2.0 | 60 |
+| Drill 0.30mm | 0.30 | 2.00 | 5.0 | 180 | 30 | 2.0 | 30 |
+| Drill 0.40mm | 0.40 | 2.00 | 5.0 | 200 | 35 | 2.0 | 35 |
+| Drill 0.50mm | 0.50 | 2.00 | 5.0 | 240 | 40 | 2.0 | 40 |
+| Drill 0.60mm | 0.60 | 2.00 | 5.0 | 260 | 45 | 2.0 | 45 |
+| Drill 0.80mm | 0.80 | 2.00 | 5.0 | 300 | 50 | 2.0 | 50 |
+| Drill 0.90mm | 0.90 | 2.00 | 5.0 | 300 | 50 | 2.0 | 50 |
+| Drill 1.00mm | 1.00 | 2.00 | 5.0 | 320 | 55 | 2.0 | 55 |
+| Drill 1.20mm | 1.20 | 2.00 | 5.0 | 320 | 55 | 2.0 | 60 |
+| Drill 1.50mm | 1.50 | 2.00 | 5.0 | 340 | 60 | 2.0 | 65 |
+| Drill 2.00mm | 2.00 | 2.00 | 5.0 | 360 | 60 | 2.0 | 80 |
+| Drill 3.00mm | 3.00 | 2.00 | 5.0 | 360 | 60 | 2.0 | 80 |
+| Drill 3.20mm | 3.20 | 2.00 | 5.0 | 360 | 60 | 2.0 | 80 |
 
 ---
 
@@ -438,7 +474,8 @@ Use `logMsg(const std::string&)` or `logMsg(const wchar_t*)` from `AppState.h`. 
 - Gerber files: large absolute coordinates in mm
 - After normalization: origin at (0,0), bottom-left corner, Y increases upward (Cartesian)
 - Canvas: `toScreenX()` / `toScreenY()` — world Y-up → screen Y-down handled by CanvasWindow
-- G-Code: coordinates match normalized world space + user XY offset
+- G-Code XY: coordinates match normalized world space + user XY offset
+- G-Code Z: Z=0 is machine bed (table surface), Z=materialThickness is copper surface. All depth values entered as positive numbers
 
 ### Minimal `platformio.ini`
 

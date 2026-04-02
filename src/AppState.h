@@ -25,11 +25,11 @@
 struct ToolPreset {
     std::string name        = "New Tool";
     double toolDiameter     = 0.2;      // mm (engraver tip width)
-    double cutDepth         = -0.05;    // mm (engraver Z cut)
-    double safeHeight       = 5.0;      // mm (engraver Z travel)
+    double cutDepth         = 0.05;     // mm (engraving depth, positive)
+    double safeHeight       = 5.0;      // mm (clearance above material)
     double feedRateXY       = 300.0;    // mm/min
     double feedRateZ        = 100.0;    // mm/min (plunge rate)
-    double zDrill           = -2.0;     // mm (drill depth)
+    double zDrill           = 2.0;      // mm (drill depth from top, positive)
     double drillFeed        = 60.0;     // mm/min (spindle feedrate)
 };
 

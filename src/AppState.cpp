@@ -18,6 +18,7 @@
 #include <vector>
 #include <cstdlib>
 #include <cstdio>
+#include <cmath>
 #include <algorithm>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -123,14 +124,14 @@ void loadSettings() {
     if (g_fldKicadDir)   g_fldKicadDir->setText(s.getValue("kicad_dir", "").c_str());
     if (g_fldOutputFile) g_fldOutputFile->setText(s.getValue("output_file", "").c_str());
     if (g_fldToolDia)    g_fldToolDia->setText(s.getValue("tip_width", "0.1").c_str());
-    if (g_fldCutDepth)   g_fldCutDepth->setText(s.getValue("z_cut", "-0.05").c_str());
+    if (g_fldCutDepth)   g_fldCutDepth->setText(s.getValue("z_cut", "0.05").c_str());
     if (g_fldSafeHeight) g_fldSafeHeight->setText(s.getValue("z_travel", "5").c_str());
     if (g_fldFeedXY)     g_fldFeedXY->setText(s.getValue("feed_xy", "300").c_str());
     if (g_fldFeedZ)      g_fldFeedZ->setText(s.getValue("feed_z", "100").c_str());
     if (g_fldOverlap)    g_fldOverlap->setText(s.getValue("overlap", "0.4").c_str());
     if (g_fldOffset)     g_fldOffset->setText(s.getValue("offset", "0.02").c_str());
     if (g_fldMaterial)   g_fldMaterial->setText(s.getValue("material", "1.5").c_str());
-    if (g_fldZDrill)     g_fldZDrill->setText(s.getValue("z_drill", "-2").c_str());
+    if (g_fldZDrill)     g_fldZDrill->setText(s.getValue("z_drill", "2").c_str());
     if (g_fldDrillDia)   g_fldDrillDia->setText(s.getValue("drill_dia", "0.8").c_str());
     if (g_fldDrillFeed)  g_fldDrillFeed->setText(s.getValue("drill_feed", "60").c_str());
     if (g_fldXOffset)    g_fldXOffset->setText(s.getValue("x_offset", "0").c_str());
@@ -194,12 +195,38 @@ void saveSettings() {
 
 void createDefaultToolPresets() {
     g_toolPresets.clear();
-    g_toolPresets.push_back({"V-bit 20deg 0.1mm", 0.1, -0.05, 5.0, 200.0, 50.0, -2.0, 60.0});
-    g_toolPresets.push_back({"V-bit 30deg 0.2mm", 0.2, -0.05, 5.0, 300.0, 80.0, -2.0, 60.0});
-    g_toolPresets.push_back({"End mill 0.8mm",    0.8, -0.15, 5.0, 400.0, 100.0, -2.0, 60.0});
-    g_toolPresets.push_back({"End mill 1.0mm",    1.0, -0.20, 5.0, 400.0, 100.0, -2.0, 60.0});
-    g_toolPresets.push_back({"Drill 0.8mm",       0.8, -2.00, 5.0, 300.0, 50.0, -2.0, 60.0});
-    g_toolPresets.push_back({"Drill 1.0mm",       1.0, -2.00, 5.0, 300.0, 50.0, -2.0, 60.0});
+    //                                    name                     dia   depth  safe  fXY    fZ    drill  dFeed
+    // V-bit engravers (isolation routing)
+    g_toolPresets.push_back({"V-bit 10deg 0.05mm",           0.05, 0.03, 5.0, 150.0, 30.0, 2.0, 60.0});
+    g_toolPresets.push_back({"V-bit 20deg 0.10mm",           0.10, 0.05, 5.0, 200.0, 50.0, 2.0, 60.0});
+    g_toolPresets.push_back({"V-bit 30deg 0.08mm (0.003in)", 0.08, 0.05, 5.0, 220.0, 50.0, 2.0, 60.0});
+    g_toolPresets.push_back({"V-bit 30deg 0.10mm",           0.10, 0.06, 5.0, 250.0, 60.0, 2.0, 60.0});
+    g_toolPresets.push_back({"V-bit 30deg 0.13mm (0.005in)", 0.13, 0.08, 5.0, 280.0, 70.0, 2.0, 60.0});
+    g_toolPresets.push_back({"V-bit 30deg 0.20mm",           0.20, 0.10, 5.0, 300.0, 80.0, 2.0, 60.0});
+    g_toolPresets.push_back({"V-bit 45deg 0.20mm",           0.20, 0.10, 5.0, 350.0, 80.0, 2.0, 60.0});
+    g_toolPresets.push_back({"V-bit 60deg 0.30mm",           0.30, 0.15, 5.0, 350.0, 100.0, 2.0, 60.0});
+    // End mills (wider isolation / cutout)
+    g_toolPresets.push_back({"End mill 0.40mm (1/64in)",    0.40, 0.10, 5.0, 220.0, 60.0, 2.0, 60.0});
+    g_toolPresets.push_back({"End mill 0.60mm",             0.60, 0.12, 5.0, 280.0, 70.0, 2.0, 60.0});
+    g_toolPresets.push_back({"End mill 0.80mm (1/32in)",    0.80, 0.15, 5.0, 400.0, 100.0, 2.0, 60.0});
+    g_toolPresets.push_back({"End mill 1.00mm",             1.00, 0.20, 5.0, 420.0, 100.0, 2.0, 60.0});
+    g_toolPresets.push_back({"End mill 1.20mm",             1.20, 0.25, 5.0, 450.0, 110.0, 2.0, 60.0});
+    g_toolPresets.push_back({"Cutout mill 1.60mm (1/16in)", 1.60, 0.35, 5.0, 500.0, 120.0, 2.0, 60.0});
+    g_toolPresets.push_back({"End mill 2.00mm",             2.00, 0.40, 5.0, 550.0, 120.0, 2.0, 60.0});
+    g_toolPresets.push_back({"End mill 3.20mm (1/8in)",     3.20, 0.60, 5.0, 700.0, 180.0, 2.0, 60.0});
+    // Drills (common PCB hole sizes)
+    g_toolPresets.push_back({"Drill 0.30mm",                  0.30, 2.00, 5.0, 180.0, 30.0, 2.0, 30.0});
+    g_toolPresets.push_back({"Drill 0.40mm",                  0.40, 2.00, 5.0, 200.0, 35.0, 2.0, 35.0});
+    g_toolPresets.push_back({"Drill 0.50mm",                  0.50, 2.00, 5.0, 240.0, 40.0, 2.0, 40.0});
+    g_toolPresets.push_back({"Drill 0.60mm",                  0.60, 2.00, 5.0, 260.0, 45.0, 2.0, 45.0});
+    g_toolPresets.push_back({"Drill 0.80mm",                  0.80, 2.00, 5.0, 300.0, 50.0, 2.0, 50.0});
+    g_toolPresets.push_back({"Drill 0.90mm",                  0.90, 2.00, 5.0, 300.0, 50.0, 2.0, 50.0});
+    g_toolPresets.push_back({"Drill 1.00mm",                  1.00, 2.00, 5.0, 320.0, 55.0, 2.0, 55.0});
+    g_toolPresets.push_back({"Drill 1.20mm",                  1.20, 2.00, 5.0, 320.0, 55.0, 2.0, 60.0});
+    g_toolPresets.push_back({"Drill 1.50mm",                  1.50, 2.00, 5.0, 340.0, 60.0, 2.0, 65.0});
+    g_toolPresets.push_back({"Drill 2.00mm",                  2.00, 2.00, 5.0, 360.0, 60.0, 2.0, 80.0});
+    g_toolPresets.push_back({"Drill 3.00mm",                  3.00, 2.00, 5.0, 360.0, 60.0, 2.0, 80.0});
+    g_toolPresets.push_back({"Drill 3.20mm",                  3.20, 2.00, 5.0, 360.0, 60.0, 2.0, 80.0});
     g_activeToolIndex = 0;
 }
 
@@ -217,11 +244,11 @@ void loadToolPresets() {
             ToolPreset tp;
             tp.name         = tc.getValue(p + "name", "Tool " + intStr(i));
             tp.toolDiameter = parseD(tc.getValue(p + "toolDiameter", "0.2"));
-            tp.cutDepth     = parseD(tc.getValue(p + "cutDepth", "-0.05"));
+            tp.cutDepth     = std::abs(parseD(tc.getValue(p + "cutDepth", "0.05")));
             tp.safeHeight   = parseD(tc.getValue(p + "safeHeight", "5.0"));
             tp.feedRateXY   = parseD(tc.getValue(p + "feedXY", "300"));
             tp.feedRateZ    = parseD(tc.getValue(p + "feedZ", "100"));
-            tp.zDrill       = parseD(tc.getValue(p + "zDrill", "-2"));
+            tp.zDrill       = std::abs(parseD(tc.getValue(p + "zDrill", "2")));
             tp.drillFeed    = parseD(tc.getValue(p + "drillFeed", "60"));
             g_toolPresets.push_back(tp);
         }
@@ -543,10 +570,11 @@ Config buildConfigFromGUI() {
         return f ? parseD(f->getText()) : 0.0;
     };
 
+    cfg.machine.materialThickness = d(g_fldMaterial);
     cfg.machine.engraver_tip_width  = d(g_fldToolDia);
-    cfg.machine.engraver_z_cut      = d(g_fldCutDepth);
+    cfg.machine.engraver_z_cut      = std::abs(d(g_fldCutDepth));
     cfg.machine.engraver_z_travel   = d(g_fldSafeHeight);
-    cfg.machine.spindle_z_drill     = d(g_fldZDrill);
+    cfg.machine.spindle_z_drill     = std::abs(d(g_fldZDrill));
     cfg.machine.spindle_tool_diameter = d(g_fldDrillDia);
     cfg.machine.move_feedrate       = 2400;
 
@@ -556,10 +584,6 @@ Config buildConfigFromGUI() {
     cfg.job.engraver_feedrate  = d(g_fldFeedXY);
     cfg.job.spindle_feedrate   = d(g_fldDrillFeed);
     cfg.job.spindle_power      = 255;
-
-    // Cutout
-    double mat = d(g_fldMaterial);
-    if (mat > 0) cfg.machine.cutout_z_final = -mat;
 
     return cfg;
 }

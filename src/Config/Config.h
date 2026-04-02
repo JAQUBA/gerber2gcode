@@ -5,18 +5,18 @@
 struct MachineConfig {
     double x_size = 0;              // 0 = no limit
     double y_size = 0;              // 0 = no limit
+    double materialThickness = 1.5;       // PCB material thickness (mm)
     // Engraver (V-bit isolation milling)
-    double engraver_z_travel = 5.0;       // safe Z for rapid moves
-    double engraver_z_cut = -0.05;        // cutting depth Z
+    double engraver_z_travel = 5.0;       // clearance above material top (mm)
+    double engraver_z_cut = 0.05;         // engraving depth into material (mm, positive)
     double engraver_tip_width = 0.2;      // V-bit tip diameter (mm)
     // Spindle (drilling)
-    double spindle_z_home = 5.0;
-    double spindle_z_pre_drill = 1.0;
-    double spindle_z_drill = -2.0;
+    double spindle_z_home = 5.0;          // clearance above material top (mm)
+    double spindle_z_pre_drill = 1.0;     // approach distance above material top (mm)
+    double spindle_z_drill = 2.0;         // drill depth from top (mm, positive; clamped so Z>=0)
     double spindle_tool_diameter = 0.8;
     // Cutout
-    double cutout_z_cut = -0.5;           // depth per pass (negative)
-    double cutout_z_final = -1.6;         // final depth (through material)
+    double cutout_z_step = 0.5;           // depth per pass (mm, positive)
     double cutout_offset = 0.0;           // extra offset from outline (mm)
     // General
     double move_feedrate = 2400;

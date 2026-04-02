@@ -111,8 +111,14 @@ std::string generateGCode(
     auto& mc  = config.machine;
     auto& job = config.job;
 
-    double zTravel = mc.engraver_z_travel;
-    double zCut    = mc.engraver_z_cut;
+    // Z coordinate model: Z=0 is machine bed (bottom of material)
+    // Material top surface at Z = materialThickness
+    double mat     = mc.materialThickness;
+    double zSafe   = mat + mc.engraver_z_travel;                          // e.g., 1.5 + 5.0 = 6.5
+    double zCut    = mat - std::abs(mc.engraver_z_cut);                   // e.g., 1.5 - 0.05 = 1.45
+    double zDrillHome = mat + mc.spindle_z_home;                          // e.g., 1.5 + 5.0 = 6.5
+    double zDrillPre  = mat + mc.spindle_z_pre_drill;                     // e.g., 1.5 + 1.0 = 2.5
+    double zDrill  = std::max(0.0, mat - std::abs(mc.spindle_z_drill));   // e.g., max(0, 1.5-2.0) = 0
 
     // Validate all coordinates within machine bounds (skip when size = 0, meaning no limit)
     if (mc.x_size > 0 && mc.y_size > 0) {
@@ -166,7 +172,7 @@ std::string generateGCode(
     // ── Engraver isolation milling ───────────────────────────────────────
     if (!contours.empty()) {
         out << "; === Engraver: isolation milling ===\n";
-        out << "G0 " << fmtZ(zTravel) << "\n";
+        out << "G0 " << fmtZ(zSafe) << "\n";
 
         for (auto& contour : contours) {
             if (contour.points.empty()) continue;
@@ -187,7 +193,7 @@ std::string generateGCode(
             out << "G1 " << fmtXY(sx, sy, xOffset, yOffset) << " "
                 << fmtF(job.engraver_feedrate) << "\n";
             // Retract
-            out << "G0 " << fmtZ(zTravel) << "\n";
+            out << "G0 " << fmtZ(zSafe) << "\n";
         }
 
         out << "\n";
@@ -197,17 +203,17 @@ std::string generateGCode(
     if (!holes.empty()) {
         out << "; === Drilling ===\n";
         out << "; NOTE: Change to drill bit manually\n";
-        out << "G0 " << fmtZ(mc.spindle_z_home) << "\n";
+        out << "G0 " << fmtZ(zDrillHome) << "\n";
 
         for (auto& hole : holes) {
             out << "G0 " << fmtXY(hole.x, hole.y, xOffset, yOffset) << "\n";
-            out << "G1 " << fmtZ(mc.spindle_z_pre_drill) << " "
+            out << "G1 " << fmtZ(zDrillPre) << " "
                 << fmtF(mc.move_feedrate) << "\n";
-            out << "G1 " << fmtZ(mc.spindle_z_drill) << " "
+            out << "G1 " << fmtZ(zDrill) << " "
                 << fmtF(job.spindle_feedrate) << "\n";
-            out << "G1 " << fmtZ(mc.spindle_z_pre_drill) << " "
+            out << "G1 " << fmtZ(zDrillPre) << " "
                 << fmtF(job.spindle_feedrate) << "\n";
-            out << "G0 " << fmtZ(mc.spindle_z_home) << "\n";
+            out << "G0 " << fmtZ(zDrillHome) << "\n";
         }
 
         out << "\n";
@@ -216,19 +222,17 @@ std::string generateGCode(
     // ── Cutout (multi-pass depth) ────────────────────────────────────────
     if (!cutoutPath.empty()) {
         out << "; === Board cutout ===\n";
-        out << "G0 " << fmtZ(zTravel) << "\n";
+        out << "G0 " << fmtZ(zSafe) << "\n";
 
-        // Calculate depth passes
-        double depthPerPass = mc.cutout_z_cut;    // negative
-        double finalZ = mc.cutout_z_final;         // negative (through material)
-        if (depthPerPass >= 0) depthPerPass = -0.5;
-        if (finalZ >= 0) finalZ = -1.6;
+        // Multi-pass from material top down to Z=0 (bed)
+        double stepDown = std::abs(mc.cutout_z_step);
+        if (stepDown < 0.01) stepDown = 0.5;
 
-        double currentZ = 0.0;
+        double currentZ = mat;
         int passNum = 0;
-        while (currentZ > finalZ + 0.001) {
-            currentZ += depthPerPass;
-            if (currentZ < finalZ) currentZ = finalZ;
+        while (currentZ > 0.001) {
+            currentZ -= stepDown;
+            if (currentZ < 0.0) currentZ = 0.0;
             passNum++;
 
             out << "; --- Pass " << passNum << " Z=" << fmtZ(currentZ).substr(1) << " ---\n";
@@ -247,13 +251,13 @@ std::string generateGCode(
             out << "G1 " << fmtXY(cutoutPath[0].x, cutoutPath[0].y, xOffset, yOffset) << " "
                 << fmtF(job.engraver_feedrate) << "\n";
             // Retract
-            out << "G0 " << fmtZ(zTravel) << "\n";
+            out << "G0 " << fmtZ(zSafe) << "\n";
         }
 
         out << "\n";
     }
 
-    out << "G0 " << fmtZ(mc.engraver_z_travel) << " ; safe Z\n";
+    out << "G0 " << fmtZ(zSafe) << " ; safe Z\n";
     out << "G0 X0 Y0 ; return home\n";
     out << "M84 ; motors off\n";
 
@@ -272,6 +276,14 @@ double estimateJobTime(
     auto& job = config.job;
     double total = 0.0;
 
+    // Z coordinate model: Z=0 is bed, material top at Z=materialThickness
+    double mat     = mc.materialThickness;
+    double zSafe   = mat + mc.engraver_z_travel;
+    double zCut    = mat - std::abs(mc.engraver_z_cut);
+    double zDrillHome = mat + mc.spindle_z_home;
+    double zDrillPre  = mat + mc.spindle_z_pre_drill;
+    double zDrill  = std::max(0.0, mat - std::abs(mc.spindle_z_drill));
+
     double prevX = 0, prevY = 0;
     double engFeed = job.engraver_feedrate > 0 ? job.engraver_feedrate : 300.0;
 
@@ -281,7 +293,7 @@ double estimateJobTime(
         // Rapid to start
         total += std::hypot(sx - prevX, sy - prevY) / (mc.move_feedrate / 60.0);
         // Plunge + retract
-        double zDelta = std::abs(mc.engraver_z_travel - mc.engraver_z_cut);
+        double zDelta = std::abs(zSafe - zCut);
         total += 2.0 * zDelta / (engFeed / 2.0 / 60.0);
 
         // Cut path
@@ -301,20 +313,18 @@ double estimateJobTime(
         prevX = 0; prevY = 0;
         for (auto& h : holes) {
             total += std::hypot(h.x - prevX, h.y - prevY) / (mc.move_feedrate / 60.0);
-            total += std::abs(mc.spindle_z_home - mc.spindle_z_pre_drill) / (mc.move_feedrate / 60.0);
-            total += std::abs(mc.spindle_z_pre_drill - mc.spindle_z_drill) / (job.spindle_feedrate / 60.0);
-            total += std::abs(mc.spindle_z_pre_drill - mc.spindle_z_drill) / (job.spindle_feedrate / 60.0);
-            total += std::abs(mc.spindle_z_home - mc.spindle_z_pre_drill) / (mc.move_feedrate / 60.0);
+            total += std::abs(zDrillHome - zDrillPre) / (mc.move_feedrate / 60.0);
+            total += std::abs(zDrillPre - zDrill) / (job.spindle_feedrate / 60.0);
+            total += std::abs(zDrillPre - zDrill) / (job.spindle_feedrate / 60.0);
+            total += std::abs(zDrillHome - zDrillPre) / (mc.move_feedrate / 60.0);
             prevX = h.x; prevY = h.y;
         }
     }
 
-    // Cutout time estimation (multi-pass)
+    // Cutout time estimation (multi-pass from materialThickness to Z=0)
     if (!cutoutPath.empty()) {
-        double depthPerPass = mc.cutout_z_cut;
-        double finalZ = mc.cutout_z_final;
-        if (depthPerPass >= 0) depthPerPass = -0.5;
-        if (finalZ >= 0) finalZ = -1.6;
+        double stepDown = std::abs(mc.cutout_z_step);
+        if (stepDown < 0.01) stepDown = 0.5;
 
         // Compute outline perimeter
         double perim = 0.0;
@@ -325,16 +335,15 @@ double estimateJobTime(
                            cutoutPath[0].y - cutoutPath.back().y);
 
         int nPasses = 0;
-        double cz = 0.0;
-        while (cz > finalZ + 0.001) {
-            cz += depthPerPass;
-            if (cz < finalZ) cz = finalZ;
+        double cz = mat;
+        while (cz > 0.001) {
+            cz -= stepDown;
+            if (cz < 0.0) cz = 0.0;
             nPasses++;
         }
-        double zTravel = mc.engraver_z_travel;
-        double zDelta = std::abs(zTravel - finalZ);
-        total += nPasses * (perim / (engFeed / 60.0));               // cutting
-        total += nPasses * 2.0 * zDelta / (engFeed / 2.0 / 60.0);   // plunge/retract
+        double zDeltaCut = std::abs(zSafe);
+        total += nPasses * (perim / (engFeed / 60.0));                   // cutting
+        total += nPasses * 2.0 * zDeltaCut / (engFeed / 2.0 / 60.0);    // plunge/retract
     }
 
     return total;

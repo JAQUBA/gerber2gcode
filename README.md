@@ -22,7 +22,7 @@ Native Windows desktop application for converting KiCad Gerber (RS-274X) and Exc
 - **Clipper2-based isolation** — contour-parallel inward offset toolpaths with configurable overlap and safety offset from copper edge
 - **Real-time GDI preview** — zoomable/pannable canvas with 13 layer types: board outline, copper (top/bottom), mask, silkscreen, paste, clearance, isolation paths, and drill holes
 - **Layer visibility panel** — toggle individual layers on/off for focused inspection
-- **Tool presets** — save/load V-bit, end mill, and drill configurations with one-click switching
+- **Tool presets** — save/load V-bit, end mill, and drill configurations with one-click switching, including common PCB sizes such as 30 deg V-bits, 1/64in and 1/32in end mills, 1/16in cutout mills, and micro-drills from 0.30 mm upward
 - **Selective generation** — independent checkboxes for Isolation, Drilling, and Cutout
 - **2-opt TSP path optimization** — nearest-neighbor + 2-opt local improvement for both isolation contours and drill hole ordering, minimizing rapid travel
 - **GRBL-compatible G-Code** — clean G0/G1 output with time estimation and optional machine bounds checking

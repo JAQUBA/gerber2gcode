@@ -111,7 +111,9 @@ void generateDebugBMP(
 {
     double toolSize = config.machine.engraver_tip_width;
     if (toolSize <= 0) toolSize = 0.1; // fallback
-    double zCut = config.machine.engraver_z_cut;
+    // Z coordinate model: Z=0 is bed, material top at materialThickness
+    double mat = config.machine.materialThickness;
+    double zCut = mat - std::abs(config.machine.engraver_z_cut);  // e.g., 1.5 - 0.05 = 1.45
 
     std::regex coordRe(R"(X([-\d.]+)\s*Y([-\d.]+))");
     std::regex zRe(R"(Z([-\d.]+))");
