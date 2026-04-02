@@ -42,13 +42,30 @@ std::vector<ToolpathContour> generateToolpath(
     return allContours;
 }
 
-// ── Nearest-start-point greedy ordering ──────────────────────────────────────
+// ── Helper: rapid distance between consecutive contours ──────────────────────
+
+static double rapidDist(const ToolpathContour& a, const ToolpathContour& b) {
+    if (a.points.empty() || b.points.empty()) return 0.0;
+    double dx = a.points.back().x - b.points.front().x;
+    double dy = a.points.back().y - b.points.front().y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+static double totalRapid(const std::vector<ToolpathContour>& v) {
+    double sum = 0;
+    for (size_t i = 0; i + 1 < v.size(); i++)
+        sum += rapidDist(v[i], v[i + 1]);
+    return sum;
+}
+
+// ── Nearest-start-point greedy ordering + 2-opt improvement ──────────────────
 
 std::vector<ToolpathContour> orderContours(
     std::vector<ToolpathContour>& contours)
 {
     if (contours.size() <= 1) return contours;
 
+    // Phase 1: Nearest-neighbor greedy ordering
     std::vector<ToolpathContour> ordered;
     ordered.reserve(contours.size());
     ordered.push_back(std::move(contours[0]));
@@ -93,6 +110,43 @@ std::vector<ToolpathContour> orderContours(
 
         ordered.push_back(std::move(contours[bestIdx]));
         curPos = ordered.back().points.back();
+    }
+
+    // Phase 2: 2-opt local improvement
+    if (ordered.size() > 2) {
+        bool improved = true;
+        int maxIter = 50;
+        while (improved && maxIter-- > 0) {
+            improved = false;
+            for (size_t i = 0; i + 2 < ordered.size(); i++) {
+                for (size_t j = i + 2; j < ordered.size(); j++) {
+                    // Current cost: rapid(i→i+1) + rapid(j→j+1 or end)
+                    double oldCost = rapidDist(ordered[i], ordered[i + 1]);
+                    if (j + 1 < ordered.size())
+                        oldCost += rapidDist(ordered[j], ordered[j + 1]);
+
+                    // Reverse contour points in the sub-sequence for evaluation
+                    // Try reversing the sub-sequence [i+1 .. j]
+                    std::reverse(ordered.begin() + i + 1, ordered.begin() + j + 1);
+                    // Also reverse internal points of each contour in the sub-range
+                    for (size_t k = i + 1; k <= j; k++)
+                        std::reverse(ordered[k].points.begin(), ordered[k].points.end());
+
+                    double newCost = rapidDist(ordered[i], ordered[i + 1]);
+                    if (j + 1 < ordered.size())
+                        newCost += rapidDist(ordered[j], ordered[j + 1]);
+
+                    if (newCost < oldCost - 0.01) {
+                        improved = true;  // Keep the reversal
+                    } else {
+                        // Undo the reversal
+                        for (size_t k = i + 1; k <= j; k++)
+                            std::reverse(ordered[k].points.begin(), ordered[k].points.end());
+                        std::reverse(ordered.begin() + i + 1, ordered.begin() + j + 1);
+                    }
+                }
+            }
+        }
     }
 
     return ordered;

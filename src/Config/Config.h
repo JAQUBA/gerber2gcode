@@ -3,19 +3,19 @@
 #include <stdexcept>
 
 struct MachineConfig {
-    double x_size;
-    double y_size;
+    double x_size = 0;              // 0 = no limit
+    double y_size = 0;              // 0 = no limit
     // Engraver (V-bit isolation milling)
-    double engraver_z_travel;       // safe Z for rapid moves (e.g. 5.0)
-    double engraver_z_cut;          // cutting depth Z (e.g. -0.05)
-    double engraver_tip_width;      // V-bit tip diameter (mm)
+    double engraver_z_travel = 5.0;       // safe Z for rapid moves
+    double engraver_z_cut = -0.05;        // cutting depth Z
+    double engraver_tip_width = 0.2;      // V-bit tip diameter (mm)
     // Spindle (drilling)
-    double spindle_z_home;
-    double spindle_z_pre_drill;
-    double spindle_z_drill;
-    double spindle_tool_diameter;
+    double spindle_z_home = 5.0;
+    double spindle_z_pre_drill = 1.0;
+    double spindle_z_drill = -2.0;
+    double spindle_tool_diameter = 0.8;
     // General
-    double move_feedrate;
+    double move_feedrate = 2400;
     // Laser (reserved for future use)
     double laser_z = 0;
     double laser_beam_diameter = 0;

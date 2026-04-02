@@ -6,11 +6,17 @@
 #include <limits>
 #include <stdexcept>
 
-// ── Drill ordering (nearest-neighbor greedy) ─────────────────────────────────
+// ── Drill ordering (nearest-neighbor + 2-opt) ────────────────────────────────
+
+static double drillDist(const DrillHole& a, const DrillHole& b) {
+    double dx = a.x - b.x, dy = a.y - b.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
 
 std::vector<DrillHole> orderDrillHoles(const std::vector<DrillHole>& holes) {
     if (holes.size() <= 1) return holes;
 
+    // Phase 1: Nearest-neighbor greedy
     std::vector<DrillHole> ordered;
     ordered.reserve(holes.size());
     ordered.push_back(holes[0]);
@@ -34,6 +40,36 @@ std::vector<DrillHole> orderDrillHoles(const std::vector<DrillHole>& holes) {
         cx = holes[bestIdx].x;
         cy = holes[bestIdx].y;
     }
+
+    // Phase 2: 2-opt local improvement
+    if (ordered.size() > 2) {
+        bool improved = true;
+        int maxIter = 100;
+        while (improved && maxIter-- > 0) {
+            improved = false;
+            for (size_t i = 0; i + 2 < ordered.size(); i++) {
+                for (size_t j = i + 2; j < ordered.size(); j++) {
+                    double oldCost = drillDist(ordered[i], ordered[i + 1]);
+                    if (j + 1 < ordered.size())
+                        oldCost += drillDist(ordered[j], ordered[j + 1]);
+
+                    // Try reversing [i+1 .. j]
+                    std::reverse(ordered.begin() + i + 1, ordered.begin() + j + 1);
+
+                    double newCost = drillDist(ordered[i], ordered[i + 1]);
+                    if (j + 1 < ordered.size())
+                        newCost += drillDist(ordered[j], ordered[j + 1]);
+
+                    if (newCost < oldCost - 0.01) {
+                        improved = true;
+                    } else {
+                        std::reverse(ordered.begin() + i + 1, ordered.begin() + j + 1);
+                    }
+                }
+            }
+        }
+    }
+
     return ordered;
 }
 
@@ -77,34 +113,36 @@ std::string generateGCode(
     double zTravel = mc.engraver_z_travel;
     double zCut    = mc.engraver_z_cut;
 
-    // Validate all coordinates within machine bounds
-    std::vector<std::string> oob;
-    for (auto& contour : contours) {
-        for (auto& pt : contour.points) {
-            double fx = pt.x + xOffset, fy = pt.y + yOffset;
-            if (fx < 0 || fx > mc.x_size || fy < 0 || fy > mc.y_size) {
-                char buf[80];
-                _snprintf(buf, sizeof(buf), "engrave (%.4f, %.4f)", fx, fy);
-                oob.push_back(buf);
-                break;
+    // Validate all coordinates within machine bounds (skip when size = 0, meaning no limit)
+    if (mc.x_size > 0 && mc.y_size > 0) {
+        std::vector<std::string> oob;
+        for (auto& contour : contours) {
+            for (auto& pt : contour.points) {
+                double fx = pt.x + xOffset, fy = pt.y + yOffset;
+                if (fx < 0 || fx > mc.x_size || fy < 0 || fy > mc.y_size) {
+                    char buf[80];
+                    _snprintf(buf, sizeof(buf), "engrave (%.4f, %.4f)", fx, fy);
+                    oob.push_back(buf);
+                    break;
+                }
             }
         }
-    }
-    for (auto& hole : holes) {
-        double fx = hole.x + xOffset, fy = hole.y + yOffset;
-        if (fx < 0 || fx > mc.x_size || fy < 0 || fy > mc.y_size) {
-            char buf[80];
-            _snprintf(buf, sizeof(buf), "drill (%.4f, %.4f)", fx, fy);
-            oob.push_back(buf);
+        for (auto& hole : holes) {
+            double fx = hole.x + xOffset, fy = hole.y + yOffset;
+            if (fx < 0 || fx > mc.x_size || fy < 0 || fy > mc.y_size) {
+                char buf[80];
+                _snprintf(buf, sizeof(buf), "drill (%.4f, %.4f)", fx, fy);
+                oob.push_back(buf);
+            }
         }
-    }
-    if (!oob.empty()) {
-        std::string msg = "Coordinates out of machine bounds:\n";
-        for (size_t i = 0; i < oob.size() && i < 5; i++)
-            msg += "  " + oob[i] + "\n";
-        if (oob.size() > 5)
-            msg += "  ... and " + std::to_string(oob.size() - 5) + " more\n";
-        throw std::runtime_error(msg);
+        if (!oob.empty()) {
+            std::string msg = "Coordinates out of machine bounds:\n";
+            for (size_t i = 0; i < oob.size() && i < 5; i++)
+                msg += "  " + oob[i] + "\n";
+            if (oob.size() > 5)
+                msg += "  ... and " + std::to_string(oob.size() - 5) + " more\n";
+            throw std::runtime_error(msg);
+        }
     }
 
     std::ostringstream out;
