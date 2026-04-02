@@ -11,6 +11,7 @@
 #include <Util/StringUtils.h>
 
 #include <windows.h>
+#include <commdlg.h>
 #include <shellapi.h>
 
 #include <string>
@@ -61,6 +62,14 @@ volatile bool  g_isRunning     = false;
 std::string    g_lastDebugPath;
 
 HWND           g_hLayerPanel   = nullptr;
+
+// ════════════════════════════════════════════════════════════════════════════
+// Auto-refresh debounce
+// ════════════════════════════════════════════════════════════════════════════
+
+static const UINT_PTR TIMER_AUTO_REFRESH = 9601;
+static const DWORD    AUTO_REFRESH_DELAY = 400;   // ms debounce
+bool                  g_needsReparse     = false;
 
 // ════════════════════════════════════════════════════════════════════════════
 // String helpers
@@ -619,6 +628,29 @@ void rebuildLayerPanel() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Auto-refresh
+// ════════════════════════════════════════════════════════════════════════════
+
+void scheduleAutoRefresh(bool reparse) {
+    if (reparse) g_needsReparse = true;
+    if (!g_window) return;
+    KillTimer(g_window->getHandle(), TIMER_AUTO_REFRESH);
+    SetTimer(g_window->getHandle(), TIMER_AUTO_REFRESH, AUTO_REFRESH_DELAY, NULL);
+}
+
+void doRefreshIsolation() {
+    if (!g_pipelineData.valid) return;
+    if (g_pipelineData.clearance.empty()) return;
+    Config cfg = buildConfigFromGUI();
+    g_pipelineData.contours = generateToolpath(g_pipelineData.clearance, cfg);
+    if (g_canvas) {
+        g_canvas->setContours(g_pipelineData.contours.empty() ? nullptr : &g_pipelineData.contours);
+        g_canvas->redraw();
+        rebuildLayerPanel();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Canvas update helper
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -675,6 +707,12 @@ void doLoadKicadDir() {
     if (g_pipelineData.valid) {
         logMsg("Parsed OK. Board: " + dblStr(g_pipelineData.boardW, 1)
              + " x " + dblStr(g_pipelineData.boardH, 1) + " mm");
+        // Generate isolation contours for preview
+        if (!g_pipelineData.clearance.empty()) {
+            Config cfg = buildConfigFromGUI();
+            g_pipelineData.contours = generateToolpath(g_pipelineData.clearance, cfg);
+            logMsg("Isolation preview: " + intStr((int)g_pipelineData.contours.size()) + " contours");
+        }
         updateCanvasFromPipelineData();
     } else {
         logMsg("Failed to parse KiCad files.");
@@ -746,6 +784,28 @@ done:
 
 void doGenerate() {
     if (g_isRunning) return;
+
+    // If no output file set, prompt user
+    std::string outPath = g_fldOutputFile ? g_fldOutputFile->getText() : "";
+    if (outPath.empty() && g_window) {
+        wchar_t file[MAX_PATH] = {};
+        OPENFILENAMEW ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner   = g_window->getHandle();
+        ofn.lpstrFilter = L"GCode (*.gcode)\0*.gcode\0All (*.*)\0*.*\0";
+        ofn.lpstrFile   = file;
+        ofn.nMaxFile    = MAX_PATH;
+        ofn.lpstrTitle  = L"Save GCode";
+        ofn.lpstrDefExt = L"gcode";
+        ofn.Flags       = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+        if (GetSaveFileNameW(&ofn)) {
+            std::string path = StringUtils::wideToUtf8(file);
+            if (g_fldOutputFile) g_fldOutputFile->setText(path.c_str());
+        } else {
+            return; // user cancelled
+        }
+    }
+
     g_isRunning = true;
     if (g_logArea) g_logArea->clear();
     saveSettings();
@@ -755,21 +815,5 @@ void doGenerate() {
 }
 
 void doExportGCode() {
-    if (g_pipelineData.gcode.empty()) {
-        logMsg("No G-Code generated yet. Run Generate first.");
-        return;
-    }
-    std::string path = g_fldOutputFile ? g_fldOutputFile->getText() : "";
-    if (path.empty()) {
-        logMsg("No output file specified.");
-        return;
-    }
-    FILE* f = fopen(path.c_str(), "w");
-    if (!f) {
-        logMsg("Error: Cannot write to " + path);
-        return;
-    }
-    fwrite(g_pipelineData.gcode.data(), 1, g_pipelineData.gcode.size(), f);
-    fclose(f);
-    logMsg("G-Code exported to: " + path);
+    doGenerate();
 }

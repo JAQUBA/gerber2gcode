@@ -45,8 +45,8 @@ gerber2gcode/
 | Module | Responsibility |
 |--------|---------------|
 | **main.cpp** | `init()` (COM init), `setup()` (window + menu + UI + canvas), `loop()` (empty — event-driven). Minimal, delegates everything. |
-| **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Layer panel: `rebuildLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
-| **AppUI** | `createUI(SimpleWindow*)` — 3-row toolbar (Open KiCad / Export / Tool dropdown / parameter fields / Generate / checkboxes), canvas, layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. |
+| **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates. Layer panel: `rebuildLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
+| **AppUI** | `createUI(SimpleWindow*)` — 3-row toolbar (Open KiCad / Export / Tool dropdown / parameter fields / Generate / checkboxes), canvas, layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Isolation-affecting fields (Tip, Overlap, Offset) have `onTextChange` callbacks that trigger debounced auto-refresh. Position fields (X/Y offset) and checkboxes (Flip, No Vias) trigger full reparse. Browse KiCad button immediately loads and previews the selected directory. |
 | **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` structs. `zoomToFit()`. Back-to-front rendering order. |
 | **Config** | `Config` struct with `MachineConfig` (engraver Z, tip width, drill Z, feedrates, offsets), `CamConfig` (overlap, offset), `JobConfig` (engraver/spindle/laser feedrates). `loadConfig()` — minimal JSON parser. |
 | **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Outputs `geo::Paths` (Clipper2). |
@@ -94,6 +94,18 @@ Window background: RGB(45, 45, 54). Canvas background: RGB(22, 22, 28). Button s
 ### Background Thread Pattern
 
 `doGenerate()` spawns a `CreateThread` worker that runs `runPipeline()`. The `g_isRunning` flag (volatile bool) prevents concurrent runs and controls the progress bar (marquee). UI updates from the thread use `logMsg()` which is safe (TextArea::append).
+
+### Auto-Refresh Preview
+
+The GUI automatically updates the canvas preview when parameters change, using a debounced `WM_TIMER` mechanism (400ms delay, timer ID 9601):
+
+- **Isolation params** (Tip width, Overlap, Offset) — `onTextChange` callback triggers `scheduleAutoRefresh(false)` → re-runs `generateToolpath()` from cached clearance data (no file re-parse)
+- **Position params** (X/Y offset) and **checkboxes** (Flip, No Vias) — trigger `scheduleAutoRefresh(true)` → full re-parse via `doLoadKicadDir()`
+- **Browse KiCad button** — immediately calls `doLoadKicadDir()` after path selection
+- **Tool preset selection** — `applyActiveToolPreset()` sets fields → field callbacks trigger debounced isolation refresh
+- **Startup** — if a saved KiCad directory exists in settings, `doLoadKicadDir()` is called automatically
+
+`doLoadKicadDir()` calls `parsePipelineData()` (lightweight parse-only pipeline) then `generateToolpath()` for isolation preview. `doRefreshIsolation()` only regenerates isolation contours from cached `g_pipelineData.clearance`.
 
 ---
 

@@ -20,6 +20,7 @@
 #include <commctrl.h>
 #include <shlobj.h>
 #include <commdlg.h>
+#include <functional>
 
 // ════════════════════════════════════════════════════════════════════════════
 // Theme colors
@@ -69,8 +70,9 @@ static Label* addLabel(SimpleWindow* win, int x, int y, int w, const wchar_t* te
 }
 
 static InputField* addField(SimpleWindow* win, int x, int y, int w,
-                             const char* defVal = "") {
-    InputField* fld = new InputField(x, y, w, 22, defVal);
+                             const char* defVal = "",
+                             std::function<void(InputField*, const char*)> cb = nullptr) {
+    InputField* fld = new InputField(x, y, w, 22, defVal, cb);
     win->add(fld);
     return fld;
 }
@@ -141,6 +143,17 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
         int w = LOWORD(lParam);
         int h = HIWORD(lParam);
         doResize(w, h);
+    }
+    // Auto-refresh debounce timer
+    if (msg == WM_TIMER && wParam == 9601) {
+        KillTimer(hwnd, 9601);
+        if (g_needsReparse) {
+            g_needsReparse = false;
+            doLoadKicadDir();
+        } else {
+            doRefreshIsolation();
+        }
+        return 0;
     }
     // Layer panel click handler — dynamic sections
     if (msg == WM_COMMAND && LOWORD(wParam) == LP_ID && HIWORD(wParam) == LBN_SELCHANGE) {
@@ -223,25 +236,32 @@ void createUI(SimpleWindow* win) {
     int m = 8;    // margin
     int y = 4;
 
+    // Callbacks for auto-refresh on parameter change
+    auto onIsoParam = [](InputField*, const char*) { scheduleAutoRefresh(false); };
+    auto onPosParam = [](InputField*, const char*) { scheduleAutoRefresh(true); };
+
     // ── Row 1: File actions + tool selector + key engraver fields ────────
     styleBtn(win, new Button(m, y, 115, 26, "Open KiCad...",
-        [](Button*) { doLoadKicadDir(); }),
+        [](Button*) {
+            auto p = browseFolderUTF8(g_window->getHandle(),
+                L"Select KiCad Gerber directory");
+            if (!p.empty()) {
+                g_fldKicadDir->setText(p.c_str());
+                doLoadKicadDir();
+            }
+        }),
         CLR_ACTION_BG, CLR_ACTION_TEXT, CLR_ACTION_HOVER);
 
-    styleBtn(win, new Button(m + 120, y, 115, 26, "Export GCode",
-        [](Button*) { doExportGCode(); }),
-        CLR_EXPORT_BG, CLR_EXPORT_TEXT, CLR_EXPORT_HOVER);
-
     // Tool preset dropdown
-    g_btnTool = new Button(m + 240, y, 150, 26, "Tool",
+    g_btnTool = new Button(m + 120, y, 150, 26, "Tool",
         [](Button*) { showToolPopup(); });
     styleBtn(win, g_btnTool, CLR_TOOL_BG, CLR_TOOL_TEXT, CLR_TOOL_HOVER);
     updateToolButtonText();
 
-    // Key fields
-    int fx = m + 398;
+    // Key fields — tool dia triggers isolation refresh
+    int fx = m + 278;
     addLabel(win, fx, y + 3, 23, L"Tip:");
-    g_fldToolDia = addField(win, fx + 25, y, 42, "0.1");
+    g_fldToolDia = addField(win, fx + 25, y, 42, "0.1", onIsoParam);
 
     fx += 72;
     addLabel(win, fx, y + 3, 30, L"Z Cut:");
@@ -266,19 +286,19 @@ void createUI(SimpleWindow* win) {
     // ── Row 2: Generate button + CAM params + drill params ─────────
     y += 30;
 
-    // Generate button
+    // Generate & Export button
     g_btnGenerate = new Button(m, y, 100, 24, "Generate",
         [](Button*) { doGenerate(); });
-    styleBtn(win, g_btnGenerate, CLR_ACTION_BG, CLR_ACTION_TEXT, CLR_ACTION_HOVER);
+    styleBtn(win, g_btnGenerate, CLR_EXPORT_BG, CLR_EXPORT_TEXT, CLR_EXPORT_HOVER);
     g_btnGenerate->setFont(L"Segoe UI", 11, true);
 
     fx = m + 108;
     addLabel(win, fx, y + 3, 48, L"Overlap:");
-    g_fldOverlap = addField(win, fx + 50, y, 36, "0.4");
+    g_fldOverlap = addField(win, fx + 50, y, 36, "0.4", onIsoParam);
 
     fx += 92;
     addLabel(win, fx, y + 3, 40, L"Offset:");
-    g_fldOffset = addField(win, fx + 42, y, 36, "0.02");
+    g_fldOffset = addField(win, fx + 42, y, 36, "0.02", onIsoParam);
 
     // Drill fields
     fx += 85;
@@ -304,7 +324,10 @@ void createUI(SimpleWindow* win) {
         [](Button*) {
             auto p = browseFolderUTF8(g_window->getHandle(),
                 L"Select KiCad Gerber directory");
-            if (!p.empty()) g_fldKicadDir->setText(p.c_str());
+            if (!p.empty()) {
+                g_fldKicadDir->setText(p.c_str());
+                doLoadKicadDir();
+            }
         });
     styleBtn(win, btnBrowse, CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
 
@@ -321,18 +344,20 @@ void createUI(SimpleWindow* win) {
         });
     styleBtn(win, btnBrowseOut, CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
 
-    // X/Y offsets
+    // X/Y offsets — trigger full reparse (position changes)
     fx = m + 670;
     addLabel(win, fx, y + 3, 17, L"X:");
-    g_fldXOffset = addField(win, fx + 18, y, 36, "0");
+    g_fldXOffset = addField(win, fx + 18, y, 36, "0", onPosParam);
     fx += 58;
     addLabel(win, fx, y + 3, 17, L"Y:");
-    g_fldYOffset = addField(win, fx + 18, y, 36, "0");
+    g_fldYOffset = addField(win, fx + 18, y, 36, "0", onPosParam);
 
     fx += 60;
-    g_chkFlip = new CheckBox(fx, y, 55, 22, "Flip", false);
+    g_chkFlip = new CheckBox(fx, y, 55, 22, "Flip", false,
+        [](CheckBox*, bool) { scheduleAutoRefresh(true); });
     win->add(g_chkFlip);
-    g_chkIgnoreVia = new CheckBox(fx + 58, y, 78, 22, "No Vias", false);
+    g_chkIgnoreVia = new CheckBox(fx + 58, y, 78, 22, "No Vias", false,
+        [](CheckBox*, bool) { scheduleAutoRefresh(true); });
     win->add(g_chkIgnoreVia);
     g_chkDebug = new CheckBox(fx + 138, y, 70, 22, "Debug", true);
     win->add(g_chkDebug);

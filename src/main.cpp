@@ -39,6 +39,14 @@ void setup() {
     logMsg("4. Click Generate");
     logMsg("");
 
+    // Auto-load project if saved KiCad dir exists
+    if (g_fldKicadDir) {
+        std::string dir = g_fldKicadDir->getText();
+        if (!dir.empty()) {
+            doLoadKicadDir();
+        }
+    }
+
     // onClose: save settings
     g_window->onClose([]() {
         saveSettings();

@@ -110,6 +110,11 @@ void doLoadKicadDir();
 void doGenerate();
 void doExportGCode();
 
+// Auto-refresh
+void scheduleAutoRefresh(bool fullReparse = false);
+void doRefreshIsolation();
+extern bool g_needsReparse;
+
 // Config builder
 Config buildConfigFromGUI();
 
