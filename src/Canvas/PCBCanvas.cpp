@@ -10,6 +10,12 @@
 static const COLORREF CLR_OUTLINE       = RGB(220, 220, 60);   // Board edge — bright yellow
 static const COLORREF CLR_COPPER_TOP    = RGB(200, 70, 60);    // F_Cu — red
 static const COLORREF CLR_COPPER_BOT    = RGB(50, 80, 200);    // B_Cu — blue
+static const COLORREF CLR_COPPER_TOP_TRACE  = RGB(200, 70, 60);    // F_Cu traces — same as copper top
+static const COLORREF CLR_COPPER_TOP_PAD    = RGB(220, 100, 80);   // F_Cu pads — lighter red
+static const COLORREF CLR_COPPER_TOP_REGION = RGB(170, 50, 40);    // F_Cu regions — darker red
+static const COLORREF CLR_COPPER_BOT_TRACE  = RGB(50, 80, 200);    // B_Cu traces — same as copper bot
+static const COLORREF CLR_COPPER_BOT_PAD    = RGB(80, 110, 220);   // B_Cu pads — lighter blue
+static const COLORREF CLR_COPPER_BOT_REGION = RGB(30, 55, 170);    // B_Cu regions — darker blue
 static const COLORREF CLR_MASK_TOP      = RGB(30, 130, 50);    // F_Mask — green
 static const COLORREF CLR_MASK_BOT      = RGB(30, 100, 130);   // B_Mask — teal
 static const COLORREF CLR_SILK_TOP      = RGB(200, 200, 100);  // F_Silk — yellow
@@ -84,6 +90,8 @@ void PCBCanvas::zoomToFit(double boardW, double boardH) {
 void PCBCanvas::clearData() {
     m_outline = nullptr;
     m_copperTop = nullptr; m_copperBottom = nullptr;
+    m_copperTopTraces = nullptr; m_copperTopPads = nullptr; m_copperTopRegions = nullptr;
+    m_copperBottomTraces = nullptr; m_copperBottomPads = nullptr; m_copperBottomRegions = nullptr;
     m_maskTop = nullptr;   m_maskBottom = nullptr;
     m_silkTop = nullptr;   m_silkBottom = nullptr;
     m_pasteTop = nullptr;  m_pasteBottom = nullptr;
@@ -112,8 +120,29 @@ void PCBCanvas::onDraw(HDC hdc, const RECT& rc) {
     if (m_layers.maskBottom)    drawPolygons(hdc, m_maskBottom,  CLR_MASK_BOT);
     if (m_layers.maskTop)       drawPolygons(hdc, m_maskTop,     CLR_MASK_TOP);
     if (m_layers.clearance)     drawPolygons(hdc, m_clearance,   CLR_CLEARANCE);
-    if (m_layers.copperBottom)  drawPolygons(hdc, m_copperBottom,CLR_COPPER_BOT);
-    if (m_layers.copperTop)     drawPolygons(hdc, m_copperTop,   CLR_COPPER_TOP);
+
+    // Copper bottom — sub-layers if available, else full layer
+    if (m_layers.copperBottom) {
+        if (m_copperBottomTraces || m_copperBottomPads || m_copperBottomRegions) {
+            if (m_layers.copperBottomSub.regions) drawPolygons(hdc, m_copperBottomRegions, CLR_COPPER_BOT_REGION);
+            if (m_layers.copperBottomSub.traces)  drawPolygons(hdc, m_copperBottomTraces,  CLR_COPPER_BOT_TRACE);
+            if (m_layers.copperBottomSub.pads)    drawPolygons(hdc, m_copperBottomPads,    CLR_COPPER_BOT_PAD);
+        } else {
+            drawPolygons(hdc, m_copperBottom, CLR_COPPER_BOT);
+        }
+    }
+
+    // Copper top — sub-layers if available, else full layer
+    if (m_layers.copperTop) {
+        if (m_copperTopTraces || m_copperTopPads || m_copperTopRegions) {
+            if (m_layers.copperTopSub.regions) drawPolygons(hdc, m_copperTopRegions, CLR_COPPER_TOP_REGION);
+            if (m_layers.copperTopSub.traces)  drawPolygons(hdc, m_copperTopTraces,  CLR_COPPER_TOP_TRACE);
+            if (m_layers.copperTopSub.pads)    drawPolygons(hdc, m_copperTopPads,    CLR_COPPER_TOP_PAD);
+        } else {
+            drawPolygons(hdc, m_copperTop, CLR_COPPER_TOP);
+        }
+    }
+
     if (m_layers.silkBottom)    drawPolygons(hdc, m_silkBottom,  CLR_SILK_BOT);
     if (m_layers.silkTop)       drawPolygons(hdc, m_silkTop,     CLR_SILK_TOP);
     if (m_layers.outline)       drawOutline(hdc);

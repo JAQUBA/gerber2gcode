@@ -80,6 +80,35 @@ static geo::Paths parseOptionalLayer(const std::string& filepath,
     return p;
 }
 
+// ── Helper: parse copper layer with component breakdown ──────────────────────
+
+static GerberComponents parseCopperLayer(const std::string& filepath,
+                                          double dx, double dy, LogCallback log) {
+    if (filepath.empty()) return {};
+    log("Parsing " + baseName(filepath) + "...");
+    GerberComponents gc = parseGerberComponents(filepath);
+    gc.traces  = geo::translateAll(gc.traces, dx, dy);
+    gc.pads    = geo::translateAll(gc.pads, dx, dy);
+    gc.regions = geo::translateAll(gc.regions, dx, dy);
+    {
+        char buf[128];
+        _snprintf(buf, sizeof(buf), "  %d traces, %d pads, %d regions",
+                 (int)gc.traces.size(), (int)gc.pads.size(), (int)gc.regions.size());
+        log(buf);
+    }
+    return gc;
+}
+
+static geo::Paths filterCopperByVisibility(const GerberComponents& gc,
+                                            const CopperVisibility& vis) {
+    geo::Paths result;
+    if (vis.traces)  result.insert(result.end(), gc.traces.begin(), gc.traces.end());
+    if (vis.pads)    result.insert(result.end(), gc.pads.begin(), gc.pads.end());
+    if (vis.regions) result.insert(result.end(), gc.regions.begin(), gc.regions.end());
+    if (result.empty()) return {};
+    return geo::unionAll(result);
+}
+
 // ── Helper: parse drill files (PTH or NPTH) ─────────────────────────────────
 
 static std::vector<DrillHole> parseDrillFiles(const std::vector<std::string>& files,
@@ -176,9 +205,11 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
         result.boardW  = boardW;
         result.boardH  = boardH;
 
-        // Copper layers
-        result.copperTop    = parseOptionalLayer(kf.copperTop,    dx, dy, log);
-        result.copperBottom = parseOptionalLayer(kf.copperBottom, dx, dy, log);
+        // Copper layers — with component breakdown
+        result.copperTopComp    = parseCopperLayer(kf.copperTop,    dx, dy, log);
+        result.copperBottomComp = parseCopperLayer(kf.copperBottom, dx, dy, log);
+        result.copperTop    = result.copperTopComp.combined();
+        result.copperBottom = result.copperBottomComp.combined();
 
         // Reference layers
         result.maskTop      = parseOptionalLayer(kf.maskTop,      dx, dy, log);
@@ -194,23 +225,32 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
 
         // Determine active copper (for isolation/clearance)
         bool doFlip = params.flip || kf.isBack();
+        result.flipped = doFlip;
+        GerberComponents& activeComp = doFlip ? result.copperBottomComp : result.copperTopComp;
         geo::Paths& activeCu = doFlip ? result.copperBottom : result.copperTop;
 
         if (doFlip) {
             log("Flipping board (B_Cu)");
-            activeCu = geo::flipX(activeCu, boardW);
+            activeComp.traces  = geo::flipX(activeComp.traces,  boardW);
+            activeComp.pads    = geo::flipX(activeComp.pads,    boardW);
+            activeComp.regions = geo::flipX(activeComp.regions, boardW);
+            activeCu = activeComp.combined();
             for (auto& h : result.drillsPTH)  h.x = boardW - h.x;
             for (auto& h : result.drillsNPTH) h.x = boardW - h.x;
         }
 
+        // Build filtered copper (only enabled categories) for isolation
+        geo::Paths filteredCu = filterCopperByVisibility(activeComp, params.copperVis);
+
         // Clip active copper and compute clearance
         geo::Paths outlinePaths = {outline};
         activeCu = geo::intersect(activeCu, outlinePaths);
+        filteredCu = geo::intersect(filteredCu, outlinePaths);
 
         if (geo::isEmpty(activeCu))
             throw std::runtime_error("No copper geometry within board outline after clipping");
 
-        result.clearance = geo::difference(outlinePaths, activeCu);
+        result.clearance = geo::difference(outlinePaths, filteredCu);
 
         // Generate isolation toolpaths
         std::vector<ToolpathContour> contours;
@@ -359,9 +399,11 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
         result.boardW  = boardW;
         result.boardH  = boardH;
 
-        // Parse all available layers
-        result.copperTop    = parseOptionalLayer(kf.copperTop,    dx, dy, log);
-        result.copperBottom = parseOptionalLayer(kf.copperBottom, dx, dy, log);
+        // Parse all available layers — copper with component breakdown
+        result.copperTopComp    = parseCopperLayer(kf.copperTop,    dx, dy, log);
+        result.copperBottomComp = parseCopperLayer(kf.copperBottom, dx, dy, log);
+        result.copperTop    = result.copperTopComp.combined();
+        result.copperBottom = result.copperBottomComp.combined();
         result.maskTop      = parseOptionalLayer(kf.maskTop,      dx, dy, log);
         result.maskBottom   = parseOptionalLayer(kf.maskBottom,   dx, dy, log);
         result.silkTop      = parseOptionalLayer(kf.silkTop,      dx, dy, log);
@@ -375,17 +417,24 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
 
         // Flip if needed
         bool doFlip = params.flip || kf.isBack();
+        result.flipped = doFlip;
+        GerberComponents& activeComp = doFlip ? result.copperBottomComp : result.copperTopComp;
         geo::Paths& activeCu = doFlip ? result.copperBottom : result.copperTop;
         if (doFlip) {
-            activeCu = geo::flipX(activeCu, boardW);
+            activeComp.traces  = geo::flipX(activeComp.traces,  boardW);
+            activeComp.pads    = geo::flipX(activeComp.pads,    boardW);
+            activeComp.regions = geo::flipX(activeComp.regions, boardW);
+            activeCu = activeComp.combined();
             for (auto& h : result.drillsPTH)  h.x = boardW - h.x;
             for (auto& h : result.drillsNPTH) h.x = boardW - h.x;
         }
 
-        // Clip and clearance
+        // Clip and clearance (use filtered copper for isolation preview)
         geo::Paths outlinePaths = {outline};
         activeCu = geo::intersect(activeCu, outlinePaths);
-        result.clearance = geo::difference(outlinePaths, activeCu);
+        geo::Paths filteredCu = filterCopperByVisibility(activeComp, params.copperVis);
+        filteredCu = geo::intersect(filteredCu, outlinePaths);
+        result.clearance = geo::difference(outlinePaths, filteredCu);
 
         result.valid = true;
 

@@ -35,6 +35,7 @@ struct MacroTemplate {
 
 enum class InterpMode { Linear, CW_Arc, CCW_Arc };
 enum class Polarity   { Dark, Clear };
+enum class FeatureType { Trace, Pad, Region };
 
 struct ParserState {
     bool isMetric          = true;
@@ -53,6 +54,11 @@ struct ParserState {
 
     Paths darkPaths;
     Paths clearPaths;
+
+    // Categorized dark paths (for GerberComponents output)
+    Paths darkTraces;
+    Paths darkPads;
+    Paths darkRegions;
 
     std::vector<Point> regionPoints;
 };
@@ -544,15 +550,25 @@ static DataCmd parseDataCmd(const std::string& cmd) {
 // Add geometry to dark/clear lists
 // ═══════════════════════════════════════════════════════════════════════════════
 
-static void addPaths(ParserState& st, const Paths& paths) {
+static void addPaths(ParserState& st, const Paths& paths, FeatureType ft = FeatureType::Trace) {
     auto& target = (st.polarity == Polarity::Dark) ? st.darkPaths : st.clearPaths;
     target.insert(target.end(), paths.begin(), paths.end());
+    if (st.polarity == Polarity::Dark) {
+        auto& cat = (ft == FeatureType::Pad) ? st.darkPads :
+                    (ft == FeatureType::Region) ? st.darkRegions : st.darkTraces;
+        cat.insert(cat.end(), paths.begin(), paths.end());
+    }
 }
 
-static void addPath(ParserState& st, const Path& path) {
+static void addPath(ParserState& st, const Path& path, FeatureType ft = FeatureType::Region) {
     if (path.empty()) return;
     auto& target = (st.polarity == Polarity::Dark) ? st.darkPaths : st.clearPaths;
     target.push_back(path);
+    if (st.polarity == Polarity::Dark) {
+        auto& cat = (ft == FeatureType::Pad) ? st.darkPads :
+                    (ft == FeatureType::Region) ? st.darkRegions : st.darkTraces;
+        cat.push_back(path);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -655,14 +671,14 @@ static void processDataCommand(ParserState& st, const std::string& cmdStr) {
                         if (!macroPaths.empty()) {
                             Paths merged = unionAll(macroPaths);
                             Paths translated = translateAll(merged, newX, newY);
-                            addPaths(st, translated);
+                            addPaths(st, translated, FeatureType::Pad);
                         }
                     }
                 } else {
                     Path shape = apertureToShape(ap);
                     if (!shape.empty()) {
                         Path translated = geo::translate(shape, newX, newY);
-                        addPath(st, translated);
+                        addPath(st, translated, FeatureType::Pad);
                     }
                 }
             }
@@ -675,7 +691,7 @@ static void processDataCommand(ParserState& st, const std::string& cmdStr) {
             if (st.interpMode == InterpMode::Linear) {
                 if (w > 0) {
                     Paths buf = bufferLine(Point(prevX, prevY), Point(newX, newY), w);
-                    addPaths(st, buf);
+                    addPaths(st, buf, FeatureType::Trace);
                 }
             } else {
                 // Arc draw
@@ -693,7 +709,7 @@ static void processDataCommand(ParserState& st, const std::string& cmdStr) {
                     fullPath.push_back(Point(prevX, prevY));
                     fullPath.insert(fullPath.end(), arcPts.begin(), arcPts.end());
                     Paths buf = bufferPath(fullPath, w);
-                    addPaths(st, buf);
+                    addPaths(st, buf, FeatureType::Trace);
                 }
             }
         }
@@ -715,7 +731,7 @@ static std::string readFileContents(const std::string& path) {
                        std::istreambuf_iterator<char>());
 }
 
-geo::Paths parseGerber(const std::string& filepath) {
+static ParserState runParser(const std::string& filepath) {
     std::string content = readFileContents(filepath);
     ParserState st;
 
@@ -731,7 +747,6 @@ geo::Paths parseGerber(const std::string& filepath) {
                 mode = Extended;
                 extBlock.clear();
             } else {
-                // End of extended block
                 processExtendedBlock(st, extBlock);
                 mode = Normal;
                 extBlock.clear();
@@ -744,9 +759,7 @@ geo::Paths parseGerber(const std::string& filepath) {
             continue;
         }
 
-        // Normal mode
         if (c == '*') {
-            // Process accumulated command
             if (!currentCmd.empty()) {
                 processDataCommand(st, currentCmd);
                 currentCmd.clear();
@@ -754,13 +767,16 @@ geo::Paths parseGerber(const std::string& filepath) {
             continue;
         }
 
-        // Skip newlines/carriage returns in normal mode
         if (c == '\n' || c == '\r') continue;
-
         currentCmd += c;
     }
 
-    // Build result: dark - clear
+    return st;
+}
+
+geo::Paths parseGerber(const std::string& filepath) {
+    ParserState st = runParser(filepath);
+
     if (st.darkPaths.empty()) return {};
 
     Paths result = unionAll(st.darkPaths);
@@ -769,6 +785,34 @@ geo::Paths parseGerber(const std::string& filepath) {
         result = difference(result, clear);
     }
     return result;
+}
+
+GerberComponents parseGerberComponents(const std::string& filepath) {
+    ParserState st = runParser(filepath);
+
+    GerberComponents gc;
+    if (!st.darkTraces.empty())  gc.traces  = unionAll(st.darkTraces);
+    if (!st.darkPads.empty())    gc.pads    = unionAll(st.darkPads);
+    if (!st.darkRegions.empty()) gc.regions = unionAll(st.darkRegions);
+
+    // Apply clear polarity subtraction to each category
+    if (!st.clearPaths.empty()) {
+        Paths clear = unionAll(st.clearPaths);
+        if (!gc.traces.empty())  gc.traces  = difference(gc.traces, clear);
+        if (!gc.pads.empty())    gc.pads    = difference(gc.pads, clear);
+        if (!gc.regions.empty()) gc.regions = difference(gc.regions, clear);
+    }
+
+    return gc;
+}
+
+geo::Paths GerberComponents::combined() const {
+    Paths all;
+    all.insert(all.end(), traces.begin(), traces.end());
+    all.insert(all.end(), pads.begin(), pads.end());
+    all.insert(all.end(), regions.begin(), regions.end());
+    if (all.empty()) return {};
+    return unionAll(all);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

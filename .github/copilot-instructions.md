@@ -19,7 +19,7 @@ gerber2gcode/
 │   ├── Config/
 │   │   └── Config.h / .cpp         # MachineConfig, CamConfig, JobConfig structs + mini JSON loader
 │   ├── Gerber/
-│   │   └── GerberParser.h / .cpp   # RS-274X Gerber file parser → geo::Paths (Clipper2)
+│   │   └── GerberParser.h / .cpp   # RS-274X Gerber file parser → geo::Paths or GerberComponents (categorized: traces/pads/regions)
 │   ├── Drill/
 │   │   └── DrillParser.h / .cpp    # Excellon drill parser → DrillHole vector
 │   ├── Geometry/
@@ -45,11 +45,11 @@ gerber2gcode/
 | Module | Responsibility |
 |--------|---------------|
 | **main.cpp** | `init()` (COM init), `setup()` (window + menu + UI + canvas), `loop()` (empty — event-driven). Minimal, delegates everything. |
-| **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates. Layer panel: `rebuildLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
+| **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates + `doRecomputeClearance()` for copper sub-layer visibility changes. Layer panel: `rebuildLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
 | **AppUI** | `createUI(SimpleWindow*)` — 3-row toolbar (Open KiCad / Export / Tool dropdown / parameter fields / Generate / checkboxes), canvas, layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Isolation-affecting fields (Tip, Overlap, Offset) have `onTextChange` callbacks that trigger debounced auto-refresh. Position fields (X/Y offset) and checkboxes (Flip, No Vias) trigger full reparse. Browse KiCad button immediately loads and previews the selected directory. |
-| **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` structs. `DrillFilter` groups holes by diameter for per-diameter visibility. `zoomToFit()`. Back-to-front rendering order. |
+| **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom) with per-component sub-layers (traces/pads/regions in distinct color shades), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` with `CopperSubVis` / `CopperSubPresence` structs. `DrillFilter` groups holes by diameter for per-diameter visibility. `zoomToFit()`. Back-to-front rendering order. |
 | **Config** | `Config` struct with `MachineConfig` (engraver Z, tip width, drill Z, feedrates, offsets), `CamConfig` (overlap, offset), `JobConfig` (engraver/spindle/laser feedrates). `loadConfig()` — minimal JSON parser. |
-| **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Outputs `geo::Paths` (Clipper2). |
+| **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Two output modes: `parseGerber()` → `geo::Paths` (flat union), `parseGerberComponents()` → `GerberComponents` (categorized: traces=D01, pads=D03, regions=G36/G37). `GerberComponents::combined()` unions all categories. |
 | **DrillParser** | Excellon parser: tool table (`TnnCdia`), coordinates, METRIC/INCH units, rout mode (M15/M16), slotted holes (G85 — skipped), via filtering. Outputs `std::vector<DrillHole>`. |
 | **Geometry** | `geo::` namespace — Clipper2 type aliases (`Point`, `Path`, `Paths`). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
 | **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. |
@@ -389,6 +389,15 @@ Under "PTH Drills" / "NPTH Drills", the layer panel shows per-diameter sub-items
 - **Canvas**: `drawDrills()` skips holes whose diameter is hidden via `DrillFilter`
 - **G-Code**: `generateThread()` collects disabled drill diameters from canvas filters into `PipelineParams::disabledDrillDiameters`. `runPipeline()` filters holes before G-Code emission
 - **Parent toggle**: "PTH Drills" / "NPTH Drills" acts as master on/off for the entire category; sub-items provide fine-grained per-diameter control within that category
+
+#### Copper Sub-Layer Items
+
+Under "Copper Top (F_Cu)" / "Copper Bottom (B_Cu)", the layer panel shows per-component sub-items: "Traces" (D01), "Pads" (D03), "Regions" (G36/G37). Each sub-item toggles a `CopperSubVis` flag in `PCBCanvas::LayerVisibility`.
+
+- **Canvas**: When sub-component pointers are set, copper layers render each category in a distinct color shade (traces=base, pads=lighter, regions=darker). When no sub-components are set, falls back to flat layer rendering
+- **Isolation**: Toggling a copper sub-vis flag triggers `doRecomputeClearance()` — recomputes clearance from cached `GerberComponents` and regenerates isolation contours (no file re-parse needed)
+- **G-Code**: `generateThread()` collects `CopperVisibility` from active copper layer's sub-vis flags into `PipelineParams::copperVis`. `runPipeline()` uses `filterCopperByVisibility()` to include only enabled categories in isolation computation
+- **Parser**: `parseGerberComponents()` returns `GerberComponents` with separate `traces`, `pads`, `regions` vectors. `combined()` unions all categories. `parseGerber()` preserved for backward compatibility
 
 ### SimpleWindow is a Singleton
 

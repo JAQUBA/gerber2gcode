@@ -124,6 +124,7 @@ void doExportGCode();
 // Auto-refresh
 void scheduleAutoRefresh(bool fullReparse = false);
 void doRefreshIsolation();
+void doRecomputeClearance();
 extern bool g_needsReparse;
 
 // Config builder

@@ -604,8 +604,18 @@ void rebuildLayerPanel() {
     // ── Copper ──
     if (pres.copperTop || pres.copperBottom) {
         addSection(L"Copper");
-        if (pres.copperTop)    addItem(L"Copper Top (F_Cu)",    lay.copperTop,    &lay.copperTop);
-        if (pres.copperBottom) addItem(L"Copper Bottom (B_Cu)", lay.copperBottom, &lay.copperBottom);
+        if (pres.copperTop) {
+            addItem(L"Copper Top (F_Cu)", lay.copperTop, &lay.copperTop);
+            if (pres.copperTopSub.traces)  addSubItem(L"Traces",  lay.copperTopSub.traces,  &lay.copperTopSub.traces);
+            if (pres.copperTopSub.pads)    addSubItem(L"Pads",    lay.copperTopSub.pads,    &lay.copperTopSub.pads);
+            if (pres.copperTopSub.regions) addSubItem(L"Regions", lay.copperTopSub.regions, &lay.copperTopSub.regions);
+        }
+        if (pres.copperBottom) {
+            addItem(L"Copper Bottom (B_Cu)", lay.copperBottom, &lay.copperBottom);
+            if (pres.copperBottomSub.traces)  addSubItem(L"Traces",  lay.copperBottomSub.traces,  &lay.copperBottomSub.traces);
+            if (pres.copperBottomSub.pads)    addSubItem(L"Pads",    lay.copperBottomSub.pads,    &lay.copperBottomSub.pads);
+            if (pres.copperBottomSub.regions) addSubItem(L"Regions", lay.copperBottomSub.regions, &lay.copperBottomSub.regions);
+        }
     }
 
     // ── Layers ──
@@ -672,6 +682,38 @@ void doRefreshIsolation() {
     }
 }
 
+// Recompute clearance from cached copper components (lightweight — no file re-parse)
+void doRecomputeClearance() {
+    if (!g_pipelineData.valid) return;
+    if (!g_canvas) return;
+
+    auto& d = g_pipelineData;
+    GerberComponents& comp = d.flipped ? d.copperBottomComp : d.copperTopComp;
+    CopperSubVis& subVis = d.flipped ? g_canvas->copperBottomSubVis() : g_canvas->copperTopSubVis();
+
+    // Build filtered copper from components using current sub-vis
+    geo::Paths filtered;
+    if (subVis.traces  && !comp.traces.empty())  { auto u = geo::unionAll(comp.traces);  filtered.insert(filtered.end(), u.begin(), u.end()); }
+    if (subVis.pads    && !comp.pads.empty())    { auto u = geo::unionAll(comp.pads);    filtered.insert(filtered.end(), u.begin(), u.end()); }
+    if (subVis.regions && !comp.regions.empty()) { auto u = geo::unionAll(comp.regions); filtered.insert(filtered.end(), u.begin(), u.end()); }
+    if (!filtered.empty()) filtered = geo::unionAll(filtered);
+
+    // Clip to board outline and compute clearance
+    geo::Paths outlinePaths = {d.outline};
+    if (!filtered.empty())
+        filtered = geo::intersect(filtered, outlinePaths);
+    d.clearance = geo::difference(outlinePaths, filtered);
+
+    // Regenerate isolation from new clearance
+    Config cfg = buildConfigFromGUI();
+    d.contours = generateToolpath(d.clearance, cfg);
+
+    g_canvas->setClearance(d.clearance.empty() ? nullptr : &d.clearance);
+    g_canvas->setContours(d.contours.empty() ? nullptr : &d.contours);
+    g_canvas->redraw();
+    rebuildLayerPanel();
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Canvas update helper
 // ════════════════════════════════════════════════════════════════════════════
@@ -684,6 +726,15 @@ static void updateCanvasFromPipelineData() {
     g_canvas->setOutline(&d.outline);
     g_canvas->setCopperTop(d.copperTop.empty() ? nullptr : &d.copperTop);
     g_canvas->setCopperBottom(d.copperBottom.empty() ? nullptr : &d.copperBottom);
+
+    // Copper sub-components
+    g_canvas->setCopperTopTraces(d.copperTopComp.traces.empty() ? nullptr : &d.copperTopComp.traces);
+    g_canvas->setCopperTopPads(d.copperTopComp.pads.empty() ? nullptr : &d.copperTopComp.pads);
+    g_canvas->setCopperTopRegions(d.copperTopComp.regions.empty() ? nullptr : &d.copperTopComp.regions);
+    g_canvas->setCopperBottomTraces(d.copperBottomComp.traces.empty() ? nullptr : &d.copperBottomComp.traces);
+    g_canvas->setCopperBottomPads(d.copperBottomComp.pads.empty() ? nullptr : &d.copperBottomComp.pads);
+    g_canvas->setCopperBottomRegions(d.copperBottomComp.regions.empty() ? nullptr : &d.copperBottomComp.regions);
+
     g_canvas->setMaskTop(d.maskTop.empty() ? nullptr : &d.maskTop);
     g_canvas->setMaskBottom(d.maskBottom.empty() ? nullptr : &d.maskBottom);
     g_canvas->setSilkTop(d.silkTop.empty() ? nullptr : &d.silkTop);
@@ -721,6 +772,16 @@ void doLoadKicadDir() {
     params.ignoreVia = g_chkIgnoreVia ? g_chkIgnoreVia->isChecked() : false;
     params.xOffset  = g_fldXOffset ? parseD(g_fldXOffset->getText()) : 0.0;
     params.yOffset  = g_fldYOffset ? parseD(g_fldYOffset->getText()) : 0.0;
+
+    // Copper sub-layer visibility
+    if (g_canvas) {
+        auto& lay = g_canvas->layers();
+        bool isFlipped = g_pipelineData.flipped || params.flip;
+        auto& sub = isFlipped ? lay.copperBottomSub : lay.copperTopSub;
+        params.copperVis.traces  = sub.traces;
+        params.copperVis.pads    = sub.pads;
+        params.copperVis.regions = sub.regions;
+    }
 
     g_pipelineData = parsePipelineData(params, [](const std::string& msg) {
         logMsg(msg);
@@ -777,6 +838,13 @@ static DWORD WINAPI generateThread(LPVOID) {
             };
             collectDisabled(g_canvas->drillFilterPTH());
             collectDisabled(g_canvas->drillFilterNPTH());
+
+            // Copper sub-layer visibility
+            bool isFlipped = params.flip;
+            auto& sub = isFlipped ? lay.copperBottomSub : lay.copperTopSub;
+            params.copperVis.traces  = sub.traces;
+            params.copperVis.pads    = sub.pads;
+            params.copperVis.regions = sub.regions;
         }
 
         g_lastDebugPath.clear();

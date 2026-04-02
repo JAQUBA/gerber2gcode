@@ -162,8 +162,24 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
             auto& item = g_layerItems[idx];
             if (!item.isSection && item.flag) {
                 *item.flag = !(*item.flag);
+
+                // Check if toggled flag belongs to copper sub-visibility
+                bool isCopperSub = false;
+                {
+                    auto& topSub = g_canvas->copperTopSubVis();
+                    auto& botSub = g_canvas->copperBottomSubVis();
+                    if (item.flag == &topSub.traces || item.flag == &topSub.pads || item.flag == &topSub.regions ||
+                        item.flag == &botSub.traces || item.flag == &botSub.pads || item.flag == &botSub.regions) {
+                        isCopperSub = true;
+                    }
+                }
+
                 rebuildLayerPanel();
                 g_canvas->redraw();
+
+                // Copper sub-vis change → recompute clearance + isolation
+                if (isCopperSub)
+                    doRecomputeClearance();
             }
         }
         SendMessageW(g_hLayerPanel, LB_SETCURSEL, (WPARAM)-1, 0);

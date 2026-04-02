@@ -3,12 +3,20 @@
 #include "Geometry/Geometry.h"
 #include "Toolpath/Toolpath.h"
 #include "Drill/DrillParser.h"
+#include "Gerber/GerberParser.h"
 #include <string>
 #include <vector>
 #include <functional>
 #include <set>
 
 using LogCallback = std::function<void(const std::string&)>;
+
+// Copper sub-layer visibility — controls which copper features are included
+struct CopperVisibility {
+    bool traces  = true;
+    bool pads    = true;
+    bool regions = true;
+};
 
 struct PipelineParams {
     Config config;
@@ -26,6 +34,8 @@ struct PipelineParams {
     // Drill diameter filter — diameters listed here are excluded from G-Code
     // Key format: "%.3f" of diameter in mm (e.g. "0.800", "3.200")
     std::set<std::string> disabledDrillDiameters;
+    // Copper sub-layer filter — which copper features to include
+    CopperVisibility copperVis;
 };
 
 struct KicadFiles {
@@ -54,6 +64,9 @@ struct PipelineResult {
     // Input layers (parsed from Gerber files)
     geo::Paths  copperTop;
     geo::Paths  copperBottom;
+    // Copper sub-components (categorized: traces, pads, regions)
+    GerberComponents copperTopComp;
+    GerberComponents copperBottomComp;
     geo::Paths  maskTop;
     geo::Paths  maskBottom;
     geo::Paths  silkTop;
@@ -73,6 +86,7 @@ struct PipelineResult {
     // Output
     std::string gcode;
     bool        valid = false;
+    bool        flipped = false;  // true if board was flipped (B_Cu active)
 
     // Helpers — combined holes for backward compat
     std::vector<DrillHole> allDrills() const {
