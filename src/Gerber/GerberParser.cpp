@@ -62,6 +62,8 @@ struct ParserState {
 
     // Pads grouped by aperture number (for per-aperture visibility)
     std::map<int, Paths> darkPadsByAperture;
+    // D03 flash center positions per aperture (for arc eligibility)
+    std::map<int, std::vector<Point>> darkPadCenters;
 
     std::vector<Point> regionPoints;
 };
@@ -691,6 +693,9 @@ static void processDataCommand(ParserState& st, const std::string& cmdStr) {
                         addPath(st, translated, FeatureType::Pad);
                     }
                 }
+                // Record flash center for arc eligibility
+                if (st.polarity == Polarity::Dark && st.currentAperture >= 0)
+                    st.darkPadCenters[st.currentAperture].push_back(Point(newX, newY));
             }
         } else if (dOp == 1) {
             // Draw (interpolate)
@@ -826,7 +831,7 @@ GerberComponents parseGerberComponents(const std::string& filepath) {
         pg.apNum = apNum;
         pg.count = (int)apPaths.size();
 
-        // Generate name from aperture info
+        // Generate name and set arc-eligibility from aperture info
         auto ait = st.apertures.find(apNum);
         if (ait != st.apertures.end()) {
             auto& ap = ait->second;
@@ -835,6 +840,8 @@ GerberComponents parseGerberComponents(const std::string& filepath) {
                 case ApertureType::Circle:
                     _snprintf(buf, sizeof(buf), "Circle \xC3\x98%.3fmm", ap.params.size() > 0 ? ap.params[0] : 0);
                     pg.name = buf;
+                    pg.isCircular = true;
+                    pg.apertureRadius = (ap.params.size() > 0) ? ap.params[0] / 2.0 : 0;
                     break;
                 case ApertureType::Rectangle:
                     _snprintf(buf, sizeof(buf), "Rect %.2f\xC3\x97%.2fmm",
@@ -862,6 +869,11 @@ GerberComponents parseGerberComponents(const std::string& filepath) {
             _snprintf(buf, sizeof(buf), "D%d", apNum);
             pg.name = buf;
         }
+
+        // Copy flash centers for this aperture
+        auto cit = st.darkPadCenters.find(apNum);
+        if (cit != st.darkPadCenters.end())
+            pg.centers = cit->second;
 
         // Union paths for this group and apply clear subtraction
         pg.paths = unionAll(apPaths);

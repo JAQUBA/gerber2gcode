@@ -57,6 +57,7 @@ CheckBox*      g_chkIgnoreVia  = nullptr;
 CheckBox*      g_chkDebug      = nullptr;
 CheckBox*      g_chkFluidNC    = nullptr;
 CheckBox*      g_chkEngraverSpindle = nullptr;
+CheckBox*      g_chkUseArcs    = nullptr;
 
 InputField*    g_fldDrillDwell = nullptr;
 
@@ -273,6 +274,7 @@ void loadSettings() {
     if (g_chkDebug)      g_chkDebug->setChecked(s.getValue("debug_image", "1") == "1");
     if (g_chkFluidNC)    g_chkFluidNC->setChecked(s.getValue("post_profile", "mach3") == "fluidnc");
     if (g_chkEngraverSpindle) g_chkEngraverSpindle->setChecked(s.getValue("engraver_spindle", "0") == "1");
+    if (g_chkUseArcs) g_chkUseArcs->setChecked(s.getValue("use_arcs", "1") == "1");
     if (g_fldDrillDwell) g_fldDrillDwell->setText(s.getValue("drill_dwell", "0").c_str());
 
     // Load layer visibility from settings
@@ -313,6 +315,7 @@ void saveSettings() {
     if (g_chkDebug)      s.setValue("debug_image",   g_chkDebug->isChecked() ? "1" : "0");
     if (g_chkFluidNC)    s.setValue("post_profile",  g_chkFluidNC->isChecked() ? "fluidnc" : "mach3");
     if (g_chkEngraverSpindle) s.setValue("engraver_spindle", g_chkEngraverSpindle->isChecked() ? "1" : "0");
+    if (g_chkUseArcs) s.setValue("use_arcs", g_chkUseArcs->isChecked() ? "1" : "0");
     if (g_fldDrillDwell) s.setValue("drill_dwell",   g_fldDrillDwell->getText());
 
     // Save layer visibility from canvas
@@ -834,6 +837,7 @@ Config buildConfigFromGUI() {
     cfg.job.engraver_feedrate  = d(g_fldFeedXY);
     cfg.job.engraver_plunge_feedrate = d(g_fldFeedZ);
     cfg.job.engraver_spindle_on = g_chkEngraverSpindle && g_chkEngraverSpindle->isChecked();
+    cfg.job.use_arcs           = !g_chkUseArcs || g_chkUseArcs->isChecked();  // default ON
     cfg.job.spindle_feedrate   = d(g_fldDrillFeed);
     cfg.job.spindle_power      = 255;
     cfg.job.drill_dwell        = d(g_fldDrillDwell);
@@ -989,6 +993,8 @@ void doRefreshIsolation() {
     if (g_pipelineData.clearance.empty()) return;
     Config cfg = buildConfigFromGUI();
     g_pipelineData.contours = generateToolpath(g_pipelineData.clearance, cfg);
+    markArcEligible(g_pipelineData.contours, g_pipelineData.circularPads,
+                    cfg.machine.engraver_tip_width);
     if (g_canvas) {
         g_canvas->setContours(g_pipelineData.contours.empty() ? nullptr : &g_pipelineData.contours);
         g_canvas->redraw();
@@ -1021,6 +1027,7 @@ void doRecomputeClearance() {
     // Regenerate isolation from new clearance
     Config cfg = buildConfigFromGUI();
     d.contours = generateToolpath(d.clearance, cfg);
+    markArcEligible(d.contours, d.circularPads, cfg.machine.engraver_tip_width);
 
     g_canvas->setClearance(d.clearance.empty() ? nullptr : &d.clearance);
     g_canvas->setContours(d.contours.empty() ? nullptr : &d.contours);
@@ -1113,6 +1120,8 @@ void doLoadKicadDir() {
         if (!g_pipelineData.clearance.empty()) {
             Config cfg = buildConfigFromGUI();
             g_pipelineData.contours = generateToolpath(g_pipelineData.clearance, cfg);
+            markArcEligible(g_pipelineData.contours, g_pipelineData.circularPads,
+                            cfg.machine.engraver_tip_width);
             logMsg("Isolation preview: " + intStr((int)g_pipelineData.contours.size()) + " contours");
         }
         updateCanvasFromPipelineData();

@@ -18,6 +18,12 @@ struct CopperVisibility {
     bool regions = true;
 };
 
+// Circular pad info for arc eligibility (collected from Gerber parser)
+struct CircPadInfo {
+    double cx, cy;    // pad center (normalized coords)
+    double radius;    // aperture radius
+};
+
 struct PipelineParams {
     Config config;
     std::string kicadDir;
@@ -84,6 +90,7 @@ struct PipelineResult {
     geo::Paths                      clearance;
     std::vector<ToolpathContour>    contours;       // isolation
     std::vector<geo::Point>         cutoutPath;     // cutout (offset outline)
+    std::vector<CircPadInfo>        circularPads;   // circular pads for arc eligibility
 
     // Output
     std::string gcode;
@@ -112,3 +119,8 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
 
 // Parse-only: parse files and return intermediate data for preview
 PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log);
+
+// Mark contours that are centered on circular pads as arc-eligible
+void markArcEligible(std::vector<ToolpathContour>& contours,
+                     const std::vector<CircPadInfo>& circPads,
+                     double matchTolerance);

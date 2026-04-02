@@ -46,15 +46,15 @@ gerber2gcode/
 |--------|---------------|
 | **main.cpp** | `init()` (COM init), `setup()` (window + menu + UI + canvas), `loop()` (empty — event-driven). Minimal, delegates everything. |
 | **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). `applyActiveToolPreset()` auto-applies tool kind workflow: generation mode mapping (Isolation / Combo / Drill / Cutout), CAM defaults (overlap/offset), XY/flip/via reset, and redraw/reparse scheduling. Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates + `doRecomputeClearance()` for copper sub-layer visibility changes. Layer panel: `rebuildLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
-| **AppUI** | `createUI(SimpleWindow*)` — polished 3-row toolbar with section headers (Project / Machining / Position), styled action buttons, themed numeric fields, canvas, wider layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Auto-managed machining controls (feeds/depths/overlap/offset/drill/XY/Flip/No Vias/Debug/Eng M3/Dwell) are read-only or disabled; workflow expects selecting a tool preset and editing mainly `Mat` (material thickness). Browse KiCad button immediately loads and previews the selected directory. |
+| **AppUI** | `createUI(SimpleWindow*)` — polished 3-row toolbar with section headers (Project / Machining / Position), styled action buttons, themed numeric fields, canvas, wider layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Auto-managed machining controls (feeds/depths/overlap/offset/drill/XY/Flip/No Vias/Debug/Eng M3/Dwell) are read-only or disabled; workflow expects selecting a tool preset and editing mainly `Mat` (material thickness). Global toggles: FluidNC (post profile), Arcs (G2/G3 arc fitting). Browse KiCad button immediately loads and previews the selected directory. |
 | **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom) with per-component sub-layers (traces/pads/regions in distinct color shades), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` with `CopperSubVis` / `CopperSubPresence` structs. `DrillFilter` groups holes by diameter for per-diameter visibility. `zoomToFit()`. Back-to-front rendering order. |
 | **Config** | `Config` struct with `MachineConfig` (engraver Z, tip width, drill Z, feedrates, offsets), `CamConfig` (overlap, offset), `JobConfig` (engraver/spindle/laser feedrates). `loadConfig()` — minimal JSON parser. |
-| **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Two output modes: `parseGerber()` → `geo::Paths` (flat union), `parseGerberComponents()` → `GerberComponents` (categorized: traces=D01, pads=D03, regions=G36/G37). `PadGroup` struct groups D03 flashes by aperture D-code with human-readable names (e.g. "Circle Ø0.800mm", "Rect 1.27×0.64mm"). `GerberComponents::combined()` unions all categories. `GerberComponents::visiblePads()` unions only visible pad groups. |
+| **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Two output modes: `parseGerber()` → `geo::Paths` (flat union), `parseGerberComponents()` → `GerberComponents` (categorized: traces=D01, pads=D03, regions=G36/G37). `PadGroup` struct groups D03 flashes by aperture D-code with human-readable names (e.g. "Circle Ø0.800mm", "Rect 1.27×0.64mm"), `isCircular` flag (Circle aperture), `apertureRadius`, and `centers` (D03 flash positions). `GerberComponents::combined()` unions all categories. `GerberComponents::visiblePads()` unions only visible pad groups. |
 | **DrillParser** | Excellon parser: tool table (`TnnCdia`), coordinates, METRIC/INCH units, rout mode (M15/M16), slotted holes (G85 — skipped), via filtering. Outputs `std::vector<DrillHole>`. |
 | **Geometry** | `geo::` namespace — Clipper2 type aliases (`Point`, `Path`, `Paths`). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
-| **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. |
-| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — Mach3/FluidNC-compatible G0/G1 output with isolation + drilling + cutout sections. Multi-pass depth cutting for cutout. Optional engraver spindle (M3) before isolation. Optional drill dwell (G4) at hole bottom. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
-| **Pipeline** | `detectKicadFiles(dir)` — auto-detect layers by filename suffix. `runPipeline(params, log, result)` — full workflow (parse → normalize → clip → isolate → order → generate → export). `parsePipelineData(params, log)` — parse-only for live preview. |
+| **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. `ToolpathContour` has `arcEligible` flag set by `markArcEligible()`. |
+| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — Mach3/FluidNC-compatible G0/G1/G2/G3 output with isolation + drilling + cutout sections. Arc fitting post-processor converts G1 polylines to G2/G3 arcs only for arc-eligible contours (circular pad offsets, determined from Gerber aperture type). Configurable via `use_arcs`. Multi-pass depth cutting for cutout. Optional engraver spindle (M3) before isolation. Optional drill dwell (G4) at hole bottom. G28 return to home at program end. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
+| **Pipeline** | `detectKicadFiles(dir)` — auto-detect layers by filename suffix. `runPipeline(params, log, result)` — full workflow (parse → normalize → clip → isolate → mark arc eligibility → order → generate → export). `parsePipelineData(params, log)` — parse-only for live preview. `markArcEligible(contours, circPads, tolerance)` — tags contours centered on circular pads as arc-eligible. `CircPadInfo` — circular pad center + radius from Gerber parsing. |
 | **DebugImage** | `generateDebugBMP(gcodePath, outputPath, config, holes)` — re-parses G-Code, renders as 24-bit BMP for visual validation. |
 
 ## Tech Stack
@@ -169,13 +169,16 @@ Z=0 is the **machine bed** (table surface). The PCB laminate sits on the bed:
 
 | Z Position | Description | Example (mat=1.5, depth=0.05, safe=5.0) |
 |-----------|-------------|------------------------------------------|
-| `materialThickness + safeHeight` | Safe rapid travel | Z6.500 |
+| `materialThickness + safeHeight` | Program safe Z (start/end only) | Z6.500 |
+| `materialThickness + 1.0` | Rapid clearance Z between operations | Z2.500 |
 | `materialThickness` | Top surface of PCB copper | Z1.500 |
 | `materialThickness - engravingDepth` | Isolation cut depth | Z1.450 |
 | `max(0, materialThickness - drillDepth)` | Drill depth (clamped to bed) | Z0.000 |
 | 0 | Cutout final depth (bed level) | Z0.000 |
 
 All user-entered depth values are **positive** (e.g., engravingDepth=0.05, drillDepth=2.0). The engine computes actual Z from `materialThickness`.
+
+**Rapid clearance strategy**: Full safe Z (`materialThickness + safeHeight`) is used only at the program start and end. Between individual operations (contour-to-contour, hole-to-hole), the machine retracts only to `materialThickness + 1.0mm` (rapid clearance) to minimize travel time.
 
 ### Output Format (Mach3/FluidNC-compatible)
 
@@ -192,16 +195,20 @@ G80 ; cancel canned cycles
 M5 ; spindle off
 ; post profile: Mach3
 G0 Z6.5000 ; initial safe Z
+G28.1 ; store current position as home
 
 ; === Engraver: isolation milling ===
 ; (optional, if engraver_spindle_on=true:)
 ; M3 S255 ; spindle on
 ; G4 P1.0 ; spindle settle
-G0 Z6.5000
+G0 Z2.5000
 G0 X10.000 Y20.000       ; rapid to contour start
 G1 Z1.4500 F150          ; plunge at half feed
-G1 X15.000 Y20.000 F300  ; cut
-G0 Z6.5000               ; retract
+G1 X15.000 Y20.000 F300  ; cut (linear)
+; (when use_arcs=true, arc segments replace G1 sequences:)
+G2 X20.000 Y25.000 I5.000 J0.000 F300  ; clockwise arc
+G3 X25.000 Y20.000 I0.000 J-5.000 F300 ; counter-clockwise arc
+G0 Z2.5000               ; retract
 
 ; === Drilling ===
 M3 S255 ; spindle on
@@ -212,10 +219,10 @@ G1 Z0.0000 F50           ; drill plunge (through material to bed)
 ; (optional, if drill_dwell > 0:)
 ; G4 P0.500 ; dwell
 G1 Z2.5000 F50           ; retract
-G0 Z6.5000               ; safe height
+G0 Z2.5000               ; rapid clearance
 
 G0 Z6.5000
-G0 X0 Y0
+G28 ; return to home position
 M5 ; spindle off
 M30 ; program end
 ```
@@ -223,6 +230,7 @@ M30 ; program end
 When FluidNC post profile is selected, output footer uses `M2`:
 
 ```gcode
+G28 ; return to home position
 M5 ; spindle off
 M2 ; program end
 ```
@@ -240,6 +248,36 @@ G0 Z6.5000                ; retract after final pass
 ```
 
 Cutout uses multi-pass depth: starts at Z=materialThickness, descends by `cutout_z_step` each pass until reaching Z=0 (bed level). The cutout path is the board outline offset outward by `spindle_tool_radius + cutout_offset`.
+
+### Arc Fitting (G2/G3 Post-Processor)
+
+Arc fitting is **Gerber-aware**: the decision whether a contour is eligible for G2/G3 conversion is determined from the original Gerber aperture types, not from polyline geometry alone.
+
+**Arc eligibility pipeline:**
+
+1. **GerberParser** marks `PadGroup.isCircular = true` for Circle apertures and stores flash center positions (`PadGroup.centers`) and radius (`PadGroup.apertureRadius`)
+2. **Pipeline** collects `CircPadInfo` (center + radius) from circular PadGroups into `PipelineResult.circularPads`
+3. **`markArcEligible()`** checks each toolpath contour: (a) compute centroid, (b) verify circularity (max-min radius / mean < 8%), (c) match centroid to a known circular pad center within tolerance → sets `ToolpathContour.arcEligible = true`
+4. **GCodeGen** applies `fitArcs()` ONLY to contours where `arcEligible == true`; all other contours emit pure G1
+
+**Arc fitting algorithm** (applied only to arc-eligible contours):
+
+1. For each contour/cutout polyline, build closed loop (append start point)
+2. Starting from each point, seed a circumscribed circle through 3 consecutive points
+3. Radius must be in bounds (0.05–100mm) — larger radii are essentially straight lines
+4. **Validate 4th point** against the seeded circle (first real test — 3 seed points always lie exactly on their circumscribed circle)
+5. **Collinearity gate**: cross product of first two edge vectors must indicate curvature > ~2° (`sinAngle > 0.035`), rejecting near-straight segments
+6. Determine CW/CCW from cross product sign: negative = CW (G2), positive = CCW (G3)
+7. Extend arc window greedily while points stay within tolerance (0.005mm) AND maintain the same curvature direction (direction consistency check)
+8. **Sweep angle validation**: arc must subtend 10°–355° (reject near-straight and near-full-circle arcs)
+9. **Endpoint refinement**: recompute center using start/mid/end points via `circumCircle` for maximum IJ precision (eliminates endpoint radius mismatch that CNC controllers would reject)
+10. Re-verify all intermediate points against the refined circle (tolerance × 2)
+11. Emit G2 (CW) or G3 (CCW) with I/J offsets (incremental from arc start to center)
+12. Fall back to G1 for segments that don't pass all checks
+
+Constants: `ARC_TOLERANCE=0.005mm`, `MIN_ARC_RADIUS=0.05mm`, `MAX_ARC_RADIUS=100mm`, `MIN_ARC_POINTS=4`, `MIN_ARC_SWEEP=10°`, `MAX_ARC_SWEEP=355°`.
+
+Benefits: smaller G-Code files, smoother motion (controller plans arc natively), better surface finish on circular pad offsets. Straight isolation segments (traces, rectangular pads) stay as G1.
 
 ### Drill Optimization
 
@@ -325,6 +363,7 @@ Steps 1–7 only — returns `PipelineResult` with parsed geometry for immediate
 | `gen_cutout` | Generate cutout G-Code | `0` |
 | `engraver_spindle` | M3 spindle on before isolation milling | `0` |
 | `drill_dwell` | Dwell at drill bottom (seconds, 0=disabled) | `0` |
+| `use_arcs` | G2/G3 arc fitting for isolation/cutout paths | `1` |
 
 ### tools.ini (Tool Presets)
 
@@ -460,7 +499,7 @@ Add new format support in `DrillParser.cpp`. Output: `std::vector<DrillHole>`.
 
 ### Extending G-Code Output
 
-Add methods to `GCodeGen`. Keep Mach3/FluidNC-compatible format (G0/G1 only, no arcs). Use `fmtXY()`, `fmtZ()`, `fmtF()` helpers for consistent formatting.
+Add methods to `GCodeGen`. Keep Mach3/FluidNC-compatible format (G0/G1/G2/G3). Use `fmtXY()`, `fmtZ()`, `fmtF()`, `fmtIJ()` helpers for consistent formatting. Arc fitting via `fitArcs()` converts polylines to G2/G3 when `use_arcs` is enabled.
 
 ### Adding New Pipeline Stages
 

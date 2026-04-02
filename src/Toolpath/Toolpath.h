@@ -5,6 +5,7 @@
 
 struct ToolpathContour {
     std::vector<geo::Point> points;
+    bool arcEligible = false;  // true if contour is around a circular pad
 };
 
 std::vector<ToolpathContour> generateToolpath(

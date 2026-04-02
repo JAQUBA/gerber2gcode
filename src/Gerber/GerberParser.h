@@ -11,6 +11,9 @@ struct PadGroup {
     geo::Paths  paths;      // geometry for this group
     int         count;      // number of flashes
     bool        visible = true;  // UI toggle (like DrillFilter)
+    bool        isCircular = false;  // true for Circle/Obround apertures (arc-eligible)
+    double      apertureRadius = 0;  // outer radius for circular apertures
+    std::vector<geo::Point> centers;  // D03 flash positions (pad centers)
 };
 
 // ── Categorized Gerber parse result ──────────────────────────────────────────

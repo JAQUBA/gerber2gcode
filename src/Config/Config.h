@@ -44,6 +44,7 @@ struct JobConfig {
     double spindle_power;
     double spindle_feedrate;        // spindle feedrate for drilling/cutout (mm/min)
     double drill_dwell = 0.0;      // dwell at drill bottom (seconds, 0 = disabled)
+    bool   use_arcs = true;         // G2/G3 arc fitting (convert G1 sequences to arcs)
     PostProfile postProfile = PostProfile::Mach3;
     // Laser (reserved for future use)
     double laser_power = 0;

@@ -6,6 +6,190 @@
 #include <limits>
 #include <stdexcept>
 
+// ── Arc fitting ──────────────────────────────────────────────────────────────
+
+static const double ARC_TOLERANCE   = 0.005;  // mm — max deviation from fitted arc
+static const double MIN_ARC_RADIUS  = 0.05;   // mm — ignore tiny arcs (noise)
+static const double MAX_ARC_RADIUS  = 100.0;  // mm — larger is essentially straight
+static const double MIN_ARC_SWEEP   = 10.0;   // degrees — skip very shallow arcs
+static const double MAX_ARC_SWEEP   = 355.0;  // degrees — avoid full-circle wrap issues
+static const size_t MIN_ARC_POINTS  = 4;      // minimum points (3 seed + 1 validation)
+static const double MIN_SIN_ANGLE   = 0.035;  // ~2° — collinearity gate
+
+struct ArcSegment {
+    bool   isArc;
+    double ex, ey;          // endpoint
+    double ci, cj;          // arc center offset from start (I, J)
+    bool   clockwise;       // G2 if true, G3 if false
+};
+
+// Compute circumscribed circle of 3 points. Returns false if collinear.
+static bool circumCircle(double x1, double y1,
+                         double x2, double y2,
+                         double x3, double y3,
+                         double& cx, double& cy, double& r)
+{
+    double ax = x2 - x1, ay = y2 - y1;
+    double bx = x3 - x1, by = y3 - y1;
+    double D = 2.0 * (ax * by - ay * bx);
+    if (std::abs(D) < 1e-12) return false;  // collinear
+
+    double a2 = ax * ax + ay * ay;
+    double b2 = bx * bx + by * by;
+    cx = x1 + (by * a2 - ay * b2) / D;
+    cy = y1 + (ax * b2 - bx * a2) / D;
+    r = std::hypot(x1 - cx, y1 - cy);
+    return true;
+}
+
+// Convert a polyline to a mix of lines and arcs.
+// Returns a vector of ArcSegments starting from pts[0].
+//
+// Algorithm:
+//  1. Seed circumscribed circle from 3 consecutive points
+//  2. Verify 4th point lies on the circle (first real validation)
+//  3. Determine CW/CCW from cross product of first two edge vectors
+//  4. Extend arc window while points stay on the circle AND maintain
+//     the same curvature direction
+//  5. Validate minimum subtended angle (reject near-straight segments)
+//  6. Recompute center from start/mid/end for accurate IJ (eliminates
+//     endpoint radius mismatch that CNC controllers would reject)
+//  7. Re-verify all intermediate points against the refined circle
+static std::vector<ArcSegment> fitArcs(const std::vector<geo::Point>& pts,
+                                        double tolerance)
+{
+    std::vector<ArcSegment> result;
+    if (pts.size() < 2) return result;
+
+    size_t i = 0;
+    while (i < pts.size() - 1) {
+        bool arcFound = false;
+
+        // Need at least MIN_ARC_POINTS to attempt arc fitting
+        if (i + MIN_ARC_POINTS - 1 < pts.size()) {
+            // Seed circle from first 3 points
+            double cx, cy, r;
+            bool ok = circumCircle(pts[i].x, pts[i].y,
+                                   pts[i + 1].x, pts[i + 1].y,
+                                   pts[i + 2].x, pts[i + 2].y,
+                                   cx, cy, r);
+
+            if (ok && r >= MIN_ARC_RADIUS && r <= MAX_ARC_RADIUS) {
+                // Validate 4th point (first real test — 3 seed points always
+                // lie exactly on their circumscribed circle)
+                double d3 = std::hypot(pts[i + 3].x - cx,
+                                       pts[i + 3].y - cy);
+                if (std::abs(d3 - r) <= tolerance) {
+
+                    // Direction from cross product of first two edge vectors
+                    double v1x = pts[i + 1].x - pts[i].x;
+                    double v1y = pts[i + 1].y - pts[i].y;
+                    double v2x = pts[i + 2].x - pts[i + 1].x;
+                    double v2y = pts[i + 2].y - pts[i + 1].y;
+                    double cross = v1x * v2y - v1y * v2x;
+
+                    // Collinearity gate — reject nearly straight segments
+                    double v1len = std::hypot(v1x, v1y);
+                    double v2len = std::hypot(v2x, v2y);
+                    if (v1len > 1e-9 && v2len > 1e-9 &&
+                        std::abs(cross) / (v1len * v2len) > MIN_SIN_ANGLE) {
+
+                        bool cw = (cross < 0.0);  // negative = CW in math coords
+
+                        // Greedily extend the arc window
+                        size_t end = i + 3;
+                        while (end + 1 < pts.size()) {
+                            double dist = std::hypot(pts[end + 1].x - cx,
+                                                     pts[end + 1].y - cy);
+                            if (std::abs(dist - r) > tolerance) break;
+
+                            // Direction consistency — reject if curvature flips
+                            double vax = pts[end].x - pts[end - 1].x;
+                            double vay = pts[end].y - pts[end - 1].y;
+                            double vbx = pts[end + 1].x - pts[end].x;
+                            double vby = pts[end + 1].y - pts[end].y;
+                            double c = vax * vby - vay * vbx;
+                            if (std::abs(c) > 1e-12 && (c < 0.0) != cw) break;
+
+                            end++;
+                        }
+
+                        // Sweep angle validation
+                        double angS = std::atan2(pts[i].y - cy, pts[i].x - cx);
+                        double angE = std::atan2(pts[end].y - cy, pts[end].x - cx);
+                        double sweep = angE - angS;
+                        if (cw) {
+                            while (sweep > 0)          sweep -= 2.0 * geo::PI;
+                            while (sweep < -2.0 * geo::PI) sweep += 2.0 * geo::PI;
+                        } else {
+                            while (sweep < 0)          sweep += 2.0 * geo::PI;
+                            while (sweep > 2.0 * geo::PI) sweep -= 2.0 * geo::PI;
+                        }
+                        double sweepDeg = std::abs(sweep) * 180.0 / geo::PI;
+
+                        if (sweepDeg >= MIN_ARC_SWEEP && sweepDeg <= MAX_ARC_SWEEP) {
+                            // Recompute center using start, mid-point, and end
+                            // for maximum endpoint accuracy (IJ precision)
+                            size_t mid = (i + end) / 2;
+                            double fcx, fcy, fr;
+                            bool fok = circumCircle(pts[i].x, pts[i].y,
+                                                    pts[mid].x, pts[mid].y,
+                                                    pts[end].x, pts[end].y,
+                                                    fcx, fcy, fr);
+
+                            if (fok && fr >= MIN_ARC_RADIUS && fr <= MAX_ARC_RADIUS) {
+                                // Verify all intermediate points against refined circle
+                                bool allOk = true;
+                                for (size_t k = i + 1; k < end; k++) {
+                                    double d = std::hypot(pts[k].x - fcx,
+                                                          pts[k].y - fcy);
+                                    if (std::abs(d - fr) > tolerance * 2.0) {
+                                        allOk = false;
+                                        break;
+                                    }
+                                }
+
+                                if (allOk) {
+                                    ArcSegment seg;
+                                    seg.isArc     = true;
+                                    seg.ex        = pts[end].x;
+                                    seg.ey        = pts[end].y;
+                                    seg.ci        = fcx - pts[i].x;
+                                    seg.cj        = fcy - pts[i].y;
+                                    seg.clockwise = cw;
+                                    result.push_back(seg);
+                                    i = end;
+                                    arcFound = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!arcFound) {
+            ArcSegment seg;
+            seg.isArc     = false;
+            seg.ex        = pts[i + 1].x;
+            seg.ey        = pts[i + 1].y;
+            seg.ci = seg.cj = 0;
+            seg.clockwise = false;
+            result.push_back(seg);
+            i++;
+        }
+    }
+
+    return result;
+}
+
+// Format I/J offsets for arc commands
+static std::string fmtIJ(double ci, double cj) {
+    char buf[80];
+    _snprintf(buf, sizeof(buf), "I%.4f J%.4f", ci, cj);
+    return buf;
+}
+
 // ── Drill ordering (nearest-neighbor + 2-opt) ────────────────────────────────
 
 static double drillDist(const DrillHole& a, const DrillHole& b) {
@@ -124,12 +308,11 @@ std::string generateGCode(
     // Z coordinate model: Z=0 is machine bed (bottom of material)
     // Material top surface at Z = materialThickness
     double mat     = mc.materialThickness;
-    double zEngraveSafe = mat + mc.engraver_z_travel;                     // e.g., 1.5 + 5.0 = 6.5
     double zCut    = std::max(0.0, mat - std::abs(mc.engraver_z_cut));    // e.g., max(0, 1.5 - 0.05) = 1.45
-    double zSpindleSafe = mat + mc.spindle_z_home;                        // e.g., 1.5 + 5.0 = 6.5
     double zDrillPre  = std::max(mat, mat + mc.spindle_z_pre_drill);      // keep pre-drill at/above material top
     double zDrill  = std::max(0.0, mat - std::abs(mc.spindle_z_drill));   // e.g., max(0, 1.5 - 2.0) = 0
-    double zProgramSafe = std::max(zEngraveSafe, zSpindleSafe);
+    double zProgramSafe = mat + std::max(mc.engraver_z_travel, mc.spindle_z_home); // full safe Z at program start/end only
+    double zRapidClear  = mat + 1.0;                                      // 1mm above material — between operations
 
     // Validate all coordinates within machine bounds (skip when size = 0, meaning no limit)
     if (mc.x_size > 0 && mc.y_size > 0) {
@@ -191,6 +374,7 @@ std::string generateGCode(
     out << "M5 ; spindle off\n";
     out << (isFluidNC ? "; post profile: FluidNC\n" : "; post profile: Mach3\n");
     out << "G0 " << fmtZ(zProgramSafe) << " ; initial safe Z\n";
+    out << "G28.1 ; store current position as home\n";
     out << "\n";
 
     bool spindleOn = false;
@@ -214,7 +398,7 @@ std::string generateGCode(
             ensureSpindleOn();
         }
 
-        out << "G0 " << fmtZ(zEngraveSafe) << "\n";
+        out << "G0 " << fmtZ(zRapidClear) << "\n";
 
         for (auto& contour : contours) {
             if (contour.points.empty()) continue;
@@ -226,16 +410,33 @@ std::string generateGCode(
             // Plunge to cutting depth
             out << "G1 " << fmtZ(zCut) << " " << fmtF(engravePlungeFeed) << "\n";
 
-            // Cut contour
-            for (size_t i = 1; i < pts.size(); i++) {
-                out << "G1 " << fmtXY(pts[i].x, pts[i].y, xOffset, yOffset) << " "
-                        << fmtF(engraveFeed) << "\n";
+            if (job.use_arcs && contour.arcEligible && pts.size() >= 3) {
+                std::vector<geo::Point> loop(pts.begin(), pts.end());
+                loop.push_back(pts[0]);
+                auto segments = fitArcs(loop, ARC_TOLERANCE);
+                for (auto& seg : segments) {
+                    if (seg.isArc) {
+                        out << (seg.clockwise ? "G2 " : "G3 ")
+                            << fmtXY(seg.ex, seg.ey, xOffset, yOffset) << " "
+                            << fmtIJ(seg.ci, seg.cj) << " "
+                            << fmtF(engraveFeed) << "\n";
+                    } else {
+                        out << "G1 " << fmtXY(seg.ex, seg.ey, xOffset, yOffset) << " "
+                            << fmtF(engraveFeed) << "\n";
+                    }
+                }
+            } else {
+                // Cut contour (G1 only)
+                for (size_t i = 1; i < pts.size(); i++) {
+                    out << "G1 " << fmtXY(pts[i].x, pts[i].y, xOffset, yOffset) << " "
+                            << fmtF(engraveFeed) << "\n";
+                }
+                // Close contour
+                out << "G1 " << fmtXY(sx, sy, xOffset, yOffset) << " "
+                    << fmtF(engraveFeed) << "\n";
             }
-            // Close contour
-            out << "G1 " << fmtXY(sx, sy, xOffset, yOffset) << " "
-                << fmtF(engraveFeed) << "\n";
             // Retract
-            out << "G0 " << fmtZ(zEngraveSafe) << "\n";
+            out << "G0 " << fmtZ(zRapidClear) << "\n";
         }
 
         out << "\n";
@@ -247,7 +448,7 @@ std::string generateGCode(
         out << "; Spindle tool diameter: " << mc.spindle_tool_diameter << " mm\n";
         out << "; Spindle feed: " << spindleFeed << " mm/min\n";
         ensureSpindleOn();
-        out << "G0 " << fmtZ(zSpindleSafe) << "\n";
+        out << "G0 " << fmtZ(zRapidClear) << "\n";
 
         for (auto& hole : holes) {
             out << "G0 " << fmtXY(hole.x, hole.y, xOffset, yOffset) << "\n";
@@ -262,7 +463,7 @@ std::string generateGCode(
             }
             out << "G1 " << fmtZ(zDrillPre) << " "
                 << fmtF(spindleFeed) << "\n";
-            out << "G0 " << fmtZ(zSpindleSafe) << "\n";
+            out << "G0 " << fmtZ(zRapidClear) << "\n";
         }
 
         out << "\n";
@@ -274,7 +475,7 @@ std::string generateGCode(
         out << "; Spindle tool diameter: " << mc.spindle_tool_diameter << " mm\n";
         out << "; Spindle feed: " << spindleFeed << " mm/min\n";
         ensureSpindleOn();
-        out << "G0 " << fmtZ(zSpindleSafe) << "\n";
+        out << "G0 " << fmtZ(zRapidClear) << "\n";
 
         // Multi-pass from material top down to Z=0 (bed)
         double stepDown = std::abs(mc.cutout_z_step);
@@ -294,23 +495,41 @@ std::string generateGCode(
             // Plunge to current pass depth
             out << "G1 " << fmtZ(currentZ) << " " << fmtF(spindleFeed) << "\n";
 
-            // Cut along outline
-            for (size_t i = 1; i < cutoutPath.size(); i++) {
-                out << "G1 " << fmtXY(cutoutPath[i].x, cutoutPath[i].y, xOffset, yOffset) << " "
-                        << fmtF(spindleFeed) << "\n";
+            if (job.use_arcs && cutoutPath.size() >= 3) {
+                // Build closed loop
+                std::vector<geo::Point> loop(cutoutPath.begin(), cutoutPath.end());
+                loop.push_back(cutoutPath[0]);
+                auto segments = fitArcs(loop, ARC_TOLERANCE);
+                for (auto& seg : segments) {
+                    if (seg.isArc) {
+                        out << (seg.clockwise ? "G2 " : "G3 ")
+                            << fmtXY(seg.ex, seg.ey, xOffset, yOffset) << " "
+                            << fmtIJ(seg.ci, seg.cj) << " "
+                            << fmtF(spindleFeed) << "\n";
+                    } else {
+                        out << "G1 " << fmtXY(seg.ex, seg.ey, xOffset, yOffset) << " "
+                            << fmtF(spindleFeed) << "\n";
+                    }
+                }
+            } else {
+                // Cut along outline (G1 only)
+                for (size_t i = 1; i < cutoutPath.size(); i++) {
+                    out << "G1 " << fmtXY(cutoutPath[i].x, cutoutPath[i].y, xOffset, yOffset) << " "
+                            << fmtF(spindleFeed) << "\n";
+                }
+                // Close the loop
+                out << "G1 " << fmtXY(cutoutPath[0].x, cutoutPath[0].y, xOffset, yOffset) << " "
+                    << fmtF(spindleFeed) << "\n";
             }
-            // Close the loop
-            out << "G1 " << fmtXY(cutoutPath[0].x, cutoutPath[0].y, xOffset, yOffset) << " "
-                << fmtF(spindleFeed) << "\n";
             // Retract
-            out << "G0 " << fmtZ(zSpindleSafe) << "\n";
+            out << "G0 " << fmtZ(zRapidClear) << "\n";
         }
 
         out << "\n";
     }
 
     out << "G0 " << fmtZ(zProgramSafe) << " ; safe Z\n";
-    out << "G0 X0 Y0 ; return home\n";
+    out << "G28 ; return to home position\n";
     out << "M5 ; spindle off\n";
     out << (isFluidNC ? "M2 ; program end\n" : "M30 ; program end\n");
 
@@ -334,9 +553,8 @@ double estimateJobTime(
 
     // Z coordinate model: Z=0 is bed, material top at Z=materialThickness
     double mat     = mc.materialThickness;
-    double zSafe   = mat + mc.engraver_z_travel;
+    double zRapidClear = mat + 1.0;                                       // 1mm above material between operations
     double zCut    = mat - std::abs(mc.engraver_z_cut);
-    double zDrillHome = mat + mc.spindle_z_home;
     double zDrillPre  = mat + mc.spindle_z_pre_drill;
     double zDrill  = std::max(0.0, mat - std::abs(mc.spindle_z_drill));
 
@@ -348,7 +566,7 @@ double estimateJobTime(
         // Rapid to start
         total += std::hypot(sx - prevX, sy - prevY) / (mc.move_feedrate / 60.0);
         // Plunge + retract
-        double zDelta = std::abs(zSafe - zCut);
+        double zDelta = std::abs(zRapidClear - zCut);
         total += 2.0 * zDelta / (engPlungeFeed / 60.0);
 
         // Cut path
@@ -368,11 +586,11 @@ double estimateJobTime(
         prevX = 0; prevY = 0;
         for (auto& h : holes) {
             total += std::hypot(h.x - prevX, h.y - prevY) / (mc.move_feedrate / 60.0);
-            total += std::abs(zDrillHome - zDrillPre) / (mc.move_feedrate / 60.0);
+            total += std::abs(zRapidClear - zDrillPre) / (mc.move_feedrate / 60.0);
             total += std::abs(zDrillPre - zDrill) / (spindleFeed / 60.0);
             if (job.drill_dwell > 0.0) total += job.drill_dwell;
             total += std::abs(zDrillPre - zDrill) / (spindleFeed / 60.0);
-            total += std::abs(zDrillHome - zDrillPre) / (mc.move_feedrate / 60.0);
+            total += std::abs(zRapidClear - zDrillPre) / (mc.move_feedrate / 60.0);
             prevX = h.x; prevY = h.y;
         }
     }
@@ -397,7 +615,7 @@ double estimateJobTime(
             if (cz < 0.0) cz = 0.0;
             nPasses++;
         }
-        double zDeltaCut = std::abs(zSafe);
+        double zDeltaCut = std::abs(zRapidClear);
         total += nPasses * (perim / (spindleFeed / 60.0));                // cutting
         total += nPasses * 2.0 * zDeltaCut / (spindleFeed / 60.0);       // plunge/retract
     }

@@ -90,8 +90,10 @@ static GerberComponents parseCopperLayer(const std::string& filepath,
     gc.traces  = geo::translateAll(gc.traces, dx, dy);
     gc.pads    = geo::translateAll(gc.pads, dx, dy);
     gc.regions = geo::translateAll(gc.regions, dx, dy);
-    for (auto& pg : gc.padGroups)
+    for (auto& pg : gc.padGroups) {
         pg.paths = geo::translateAll(pg.paths, dx, dy);
+        for (auto& c : pg.centers) { c.x += dx; c.y += dy; }
+    }
     {
         char buf[128];
         _snprintf(buf, sizeof(buf), "  %d traces, %d pads, %d regions",
@@ -119,6 +121,63 @@ static geo::Paths filterCopperByVisibility(const GerberComponents& gc,
     if (vis.regions) result.insert(result.end(), gc.regions.begin(), gc.regions.end());
     if (result.empty()) return {};
     return geo::unionAll(result);
+}
+
+// ── Helper: collect circular pad centers from GerberComponents ───────────────
+
+static std::vector<CircPadInfo> collectCircularPads(const GerberComponents& gc) {
+    std::vector<CircPadInfo> pads;
+    for (auto& pg : gc.padGroups) {
+        if (!pg.isCircular || !pg.visible) continue;
+        for (auto& c : pg.centers) {
+            CircPadInfo info;
+            info.cx     = c.x;
+            info.cy     = c.y;
+            info.radius = pg.apertureRadius;
+            pads.push_back(info);
+        }
+    }
+    return pads;
+}
+
+// ── Helper: mark contours that are centered on circular pads ─────────────────
+
+void markArcEligible(std::vector<ToolpathContour>& contours,
+                             const std::vector<CircPadInfo>& circPads,
+                             double matchTolerance) {
+    if (circPads.empty()) return;
+
+    for (auto& contour : contours) {
+        if (contour.points.size() < 4) continue;
+
+        // Compute centroid
+        double cx = 0, cy = 0;
+        for (auto& pt : contour.points) { cx += pt.x; cy += pt.y; }
+        cx /= contour.points.size();
+        cy /= contour.points.size();
+
+        // Compute min/max distance from centroid
+        double minR = 1e18, maxR = 0;
+        for (auto& pt : contour.points) {
+            double r = std::hypot(pt.x - cx, pt.y - cy);
+            if (r < minR) minR = r;
+            if (r > maxR) maxR = r;
+        }
+        double meanR = (minR + maxR) / 2.0;
+
+        // Circularity check: contour must be approximately circular
+        if (meanR < 0.01) continue;  // degenerate
+        if ((maxR - minR) / meanR > 0.08) continue;  // >8% variation = not circular
+
+        // Check if centroid matches any known circular pad center
+        for (auto& pad : circPads) {
+            double dist = std::hypot(cx - pad.cx, cy - pad.cy);
+            if (dist <= matchTolerance) {
+                contour.arcEligible = true;
+                break;
+            }
+        }
+    }
 }
 
 // ── Helper: parse drill files (PTH or NPTH) ─────────────────────────────────
@@ -246,12 +305,17 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
             activeComp.traces  = geo::flipX(activeComp.traces,  boardW);
             activeComp.pads    = geo::flipX(activeComp.pads,    boardW);
             activeComp.regions = geo::flipX(activeComp.regions, boardW);
-            for (auto& pg : activeComp.padGroups)
+            for (auto& pg : activeComp.padGroups) {
                 pg.paths = geo::flipX(pg.paths, boardW);
+                for (auto& c : pg.centers) c.x = boardW - c.x;
+            }
             activeCu = activeComp.combined();
             for (auto& h : result.drillsPTH)  h.x = boardW - h.x;
             for (auto& h : result.drillsNPTH) h.x = boardW - h.x;
         }
+
+        // Collect circular pad info for arc eligibility
+        result.circularPads = collectCircularPads(activeComp);
 
         // Build filtered copper (only enabled categories) for isolation
         geo::Paths filteredCu = filterCopperByVisibility(activeComp, params.copperVis, params.disabledPadApertures);
@@ -271,9 +335,14 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
         if (params.generateIsolation) {
             log("Generating engraver toolpath...");
             contours = generateToolpath(result.clearance, config);
+            markArcEligible(contours, result.circularPads,
+                            config.machine.engraver_tip_width);
             {
-                char buf[64];
-                _snprintf(buf, sizeof(buf), "%d contours generated", (int)contours.size());
+                int arcCount = 0;
+                for (auto& c : contours) if (c.arcEligible) arcCount++;
+                char buf[96];
+                _snprintf(buf, sizeof(buf), "%d contours generated (%d arc-eligible)",
+                         (int)contours.size(), arcCount);
                 log(buf);
             }
             result.contours = contours;
@@ -458,12 +527,17 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
             activeComp.traces  = geo::flipX(activeComp.traces,  boardW);
             activeComp.pads    = geo::flipX(activeComp.pads,    boardW);
             activeComp.regions = geo::flipX(activeComp.regions, boardW);
-            for (auto& pg : activeComp.padGroups)
+            for (auto& pg : activeComp.padGroups) {
                 pg.paths = geo::flipX(pg.paths, boardW);
+                for (auto& c : pg.centers) c.x = boardW - c.x;
+            }
             activeCu = activeComp.combined();
             for (auto& h : result.drillsPTH)  h.x = boardW - h.x;
             for (auto& h : result.drillsNPTH) h.x = boardW - h.x;
         }
+
+        // Collect circular pad info for arc eligibility
+        result.circularPads = collectCircularPads(activeComp);
 
         // Clip and clearance (use filtered copper for isolation preview)
         geo::Paths outlinePaths = {outline};

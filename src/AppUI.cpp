@@ -425,6 +425,10 @@ void createUI(SimpleWindow* win) {
     addLabel(win, m + 1266, y + 3, 48, L"Dwell:");
     g_fldDrillDwell = addField(win, m + 1316, y, 48, "0");
 
+    g_chkUseArcs = new CheckBox(m + 1370, y + 1, 68, 24, "Arcs", true);
+    win->add(g_chkUseArcs);
+    styleCheck(g_chkUseArcs);
+
     // Auto-managed workflow: these options are derived from selected tool preset.
     // User should mainly provide material thickness (Mat).
     if (g_fldToolDia)    g_fldToolDia->setReadOnly(true);
