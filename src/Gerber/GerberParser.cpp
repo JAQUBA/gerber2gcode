@@ -60,6 +60,9 @@ struct ParserState {
     Paths darkPads;
     Paths darkRegions;
 
+    // Pads grouped by aperture number (for per-aperture visibility)
+    std::map<int, Paths> darkPadsByAperture;
+
     std::vector<Point> regionPoints;
 };
 
@@ -557,6 +560,10 @@ static void addPaths(ParserState& st, const Paths& paths, FeatureType ft = Featu
         auto& cat = (ft == FeatureType::Pad) ? st.darkPads :
                     (ft == FeatureType::Region) ? st.darkRegions : st.darkTraces;
         cat.insert(cat.end(), paths.begin(), paths.end());
+        if (ft == FeatureType::Pad && st.currentAperture >= 0) {
+            auto& apPads = st.darkPadsByAperture[st.currentAperture];
+            apPads.insert(apPads.end(), paths.begin(), paths.end());
+        }
     }
 }
 
@@ -568,6 +575,9 @@ static void addPath(ParserState& st, const Path& path, FeatureType ft = FeatureT
         auto& cat = (ft == FeatureType::Pad) ? st.darkPads :
                     (ft == FeatureType::Region) ? st.darkRegions : st.darkTraces;
         cat.push_back(path);
+        if (ft == FeatureType::Pad && st.currentAperture >= 0) {
+            st.darkPadsByAperture[st.currentAperture].push_back(path);
+        }
     }
 }
 
@@ -796,11 +806,70 @@ GerberComponents parseGerberComponents(const std::string& filepath) {
     if (!st.darkRegions.empty()) gc.regions = unionAll(st.darkRegions);
 
     // Apply clear polarity subtraction to each category
-    if (!st.clearPaths.empty()) {
-        Paths clear = unionAll(st.clearPaths);
+    Paths clear;
+    if (!st.clearPaths.empty())
+        clear = unionAll(st.clearPaths);
+
+    if (!clear.empty()) {
         if (!gc.traces.empty())  gc.traces  = difference(gc.traces, clear);
         if (!gc.pads.empty())    gc.pads    = difference(gc.pads, clear);
         if (!gc.regions.empty()) gc.regions = difference(gc.regions, clear);
+    }
+
+    // Build pad groups from per-aperture map
+    for (auto& kv : st.darkPadsByAperture) {
+        int apNum = kv.first;
+        auto& apPaths = kv.second;
+        if (apPaths.empty()) continue;
+
+        PadGroup pg;
+        pg.apNum = apNum;
+        pg.count = (int)apPaths.size();
+
+        // Generate name from aperture info
+        auto ait = st.apertures.find(apNum);
+        if (ait != st.apertures.end()) {
+            auto& ap = ait->second;
+            char buf[64];
+            switch (ap.type) {
+                case ApertureType::Circle:
+                    _snprintf(buf, sizeof(buf), "Circle \xC3\x98%.3fmm", ap.params.size() > 0 ? ap.params[0] : 0);
+                    pg.name = buf;
+                    break;
+                case ApertureType::Rectangle:
+                    _snprintf(buf, sizeof(buf), "Rect %.2f\xC3\x97%.2fmm",
+                             ap.params.size() > 0 ? ap.params[0] : 0,
+                             ap.params.size() > 1 ? ap.params[1] : 0);
+                    pg.name = buf;
+                    break;
+                case ApertureType::Obround:
+                    _snprintf(buf, sizeof(buf), "Obround %.2f\xC3\x97%.2fmm",
+                             ap.params.size() > 0 ? ap.params[0] : 0,
+                             ap.params.size() > 1 ? ap.params[1] : 0);
+                    pg.name = buf;
+                    break;
+                case ApertureType::Polygon:
+                    _snprintf(buf, sizeof(buf), "Polygon %d-gon",
+                             ap.params.size() > 1 ? (int)ap.params[1] : 0);
+                    pg.name = buf;
+                    break;
+                case ApertureType::Macro:
+                    pg.name = ap.macroName;
+                    break;
+            }
+        } else {
+            char buf[32];
+            _snprintf(buf, sizeof(buf), "D%d", apNum);
+            pg.name = buf;
+        }
+
+        // Union paths for this group and apply clear subtraction
+        pg.paths = unionAll(apPaths);
+        if (!clear.empty() && !pg.paths.empty())
+            pg.paths = difference(pg.paths, clear);
+
+        if (!pg.paths.empty())
+            gc.padGroups.push_back(pg);
     }
 
     return gc;
@@ -813,6 +882,16 @@ geo::Paths GerberComponents::combined() const {
     all.insert(all.end(), regions.begin(), regions.end());
     if (all.empty()) return {};
     return unionAll(all);
+}
+
+geo::Paths GerberComponents::visiblePads() const {
+    Paths result;
+    for (auto& pg : padGroups) {
+        if (pg.visible)
+            result.insert(result.end(), pg.paths.begin(), pg.paths.end());
+    }
+    if (result.empty()) return {};
+    return unionAll(result);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

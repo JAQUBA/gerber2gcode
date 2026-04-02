@@ -90,6 +90,8 @@ static GerberComponents parseCopperLayer(const std::string& filepath,
     gc.traces  = geo::translateAll(gc.traces, dx, dy);
     gc.pads    = geo::translateAll(gc.pads, dx, dy);
     gc.regions = geo::translateAll(gc.regions, dx, dy);
+    for (auto& pg : gc.padGroups)
+        pg.paths = geo::translateAll(pg.paths, dx, dy);
     {
         char buf[128];
         _snprintf(buf, sizeof(buf), "  %d traces, %d pads, %d regions",
@@ -100,10 +102,20 @@ static GerberComponents parseCopperLayer(const std::string& filepath,
 }
 
 static geo::Paths filterCopperByVisibility(const GerberComponents& gc,
-                                            const CopperVisibility& vis) {
+                                            const CopperVisibility& vis,
+                                            const std::set<int>& disabledPadAps = {}) {
     geo::Paths result;
     if (vis.traces)  result.insert(result.end(), gc.traces.begin(), gc.traces.end());
-    if (vis.pads)    result.insert(result.end(), gc.pads.begin(), gc.pads.end());
+    if (vis.pads) {
+        if (disabledPadAps.empty()) {
+            result.insert(result.end(), gc.pads.begin(), gc.pads.end());
+        } else {
+            for (auto& pg : gc.padGroups) {
+                if (disabledPadAps.count(pg.apNum) == 0)
+                    result.insert(result.end(), pg.paths.begin(), pg.paths.end());
+            }
+        }
+    }
     if (vis.regions) result.insert(result.end(), gc.regions.begin(), gc.regions.end());
     if (result.empty()) return {};
     return geo::unionAll(result);
@@ -234,13 +246,15 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
             activeComp.traces  = geo::flipX(activeComp.traces,  boardW);
             activeComp.pads    = geo::flipX(activeComp.pads,    boardW);
             activeComp.regions = geo::flipX(activeComp.regions, boardW);
+            for (auto& pg : activeComp.padGroups)
+                pg.paths = geo::flipX(pg.paths, boardW);
             activeCu = activeComp.combined();
             for (auto& h : result.drillsPTH)  h.x = boardW - h.x;
             for (auto& h : result.drillsNPTH) h.x = boardW - h.x;
         }
 
         // Build filtered copper (only enabled categories) for isolation
-        geo::Paths filteredCu = filterCopperByVisibility(activeComp, params.copperVis);
+        geo::Paths filteredCu = filterCopperByVisibility(activeComp, params.copperVis, params.disabledPadApertures);
 
         // Clip active copper and compute clearance
         geo::Paths outlinePaths = {outline};
@@ -424,6 +438,8 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
             activeComp.traces  = geo::flipX(activeComp.traces,  boardW);
             activeComp.pads    = geo::flipX(activeComp.pads,    boardW);
             activeComp.regions = geo::flipX(activeComp.regions, boardW);
+            for (auto& pg : activeComp.padGroups)
+                pg.paths = geo::flipX(pg.paths, boardW);
             activeCu = activeComp.combined();
             for (auto& h : result.drillsPTH)  h.x = boardW - h.x;
             for (auto& h : result.drillsNPTH) h.x = boardW - h.x;
@@ -432,7 +448,7 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
         // Clip and clearance (use filtered copper for isolation preview)
         geo::Paths outlinePaths = {outline};
         activeCu = geo::intersect(activeCu, outlinePaths);
-        geo::Paths filteredCu = filterCopperByVisibility(activeComp, params.copperVis);
+        geo::Paths filteredCu = filterCopperByVisibility(activeComp, params.copperVis, params.disabledPadApertures);
         filteredCu = geo::intersect(filteredCu, outlinePaths);
         result.clearance = geo::difference(outlinePaths, filteredCu);
 

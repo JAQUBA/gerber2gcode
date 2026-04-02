@@ -49,7 +49,7 @@ gerber2gcode/
 | **AppUI** | `createUI(SimpleWindow*)` — 3-row toolbar (Open KiCad / Export / Tool dropdown / parameter fields / Generate / checkboxes), canvas, layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Isolation-affecting fields (Tip, Overlap, Offset) have `onTextChange` callbacks that trigger debounced auto-refresh. Position fields (X/Y offset) and checkboxes (Flip, No Vias) trigger full reparse. Browse KiCad button immediately loads and previews the selected directory. |
 | **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom) with per-component sub-layers (traces/pads/regions in distinct color shades), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` with `CopperSubVis` / `CopperSubPresence` structs. `DrillFilter` groups holes by diameter for per-diameter visibility. `zoomToFit()`. Back-to-front rendering order. |
 | **Config** | `Config` struct with `MachineConfig` (engraver Z, tip width, drill Z, feedrates, offsets), `CamConfig` (overlap, offset), `JobConfig` (engraver/spindle/laser feedrates). `loadConfig()` — minimal JSON parser. |
-| **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Two output modes: `parseGerber()` → `geo::Paths` (flat union), `parseGerberComponents()` → `GerberComponents` (categorized: traces=D01, pads=D03, regions=G36/G37). `GerberComponents::combined()` unions all categories. |
+| **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Two output modes: `parseGerber()` → `geo::Paths` (flat union), `parseGerberComponents()` → `GerberComponents` (categorized: traces=D01, pads=D03, regions=G36/G37). `PadGroup` struct groups D03 flashes by aperture D-code with human-readable names (e.g. "Circle Ø0.800mm", "Rect 1.27×0.64mm"). `GerberComponents::combined()` unions all categories. `GerberComponents::visiblePads()` unions only visible pad groups. |
 | **DrillParser** | Excellon parser: tool table (`TnnCdia`), coordinates, METRIC/INCH units, rout mode (M15/M16), slotted holes (G85 — skipped), via filtering. Outputs `std::vector<DrillHole>`. |
 | **Geometry** | `geo::` namespace — Clipper2 type aliases (`Point`, `Path`, `Paths`). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
 | **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. |
@@ -397,7 +397,17 @@ Under "Copper Top (F_Cu)" / "Copper Bottom (B_Cu)", the layer panel shows per-co
 - **Canvas**: When sub-component pointers are set, copper layers render each category in a distinct color shade (traces=base, pads=lighter, regions=darker). When no sub-components are set, falls back to flat layer rendering
 - **Isolation**: Toggling a copper sub-vis flag triggers `doRecomputeClearance()` — recomputes clearance from cached `GerberComponents` and regenerates isolation contours (no file re-parse needed)
 - **G-Code**: `generateThread()` collects `CopperVisibility` from active copper layer's sub-vis flags into `PipelineParams::copperVis`. `runPipeline()` uses `filterCopperByVisibility()` to include only enabled categories in isolation computation
-- **Parser**: `parseGerberComponents()` returns `GerberComponents` with separate `traces`, `pads`, `regions` vectors. `combined()` unions all categories. `parseGerber()` preserved for backward compatibility
+- **Parser**: `parseGerberComponents()` returns `GerberComponents` with separate `traces`, `pads`, `regions` vectors plus `padGroups` (per-aperture). `combined()` unions all categories. `visiblePads()` unions only visible pad groups. `parseGerber()` preserved for backward compatibility
+
+#### Per-Aperture Pad Groups
+
+Under the "Pads" sub-item, the layer panel shows per-aperture pad groups as sub-sub-items (e.g. "Circle Ø0.800mm (4)", "Rect 1.27×0.64mm (12)"). Each sub-sub-item toggles `PadGroup::visible`.
+
+- **Data**: `PadGroup` struct: `name` (human-readable aperture description), `apNum` (D-code), `paths`, `count`, `visible` (UI toggle)
+- **Parser**: `parseGerberComponents()` groups D03 flashes by aperture number into `darkPadsByAperture` map, then builds named `PadGroup` entries from aperture type/params
+- **Canvas**: When pad group pointers are set, `onDraw()` iterates over visible pad groups. `setCopperTopPadGroups()` / `setCopperBottomPadGroups()` store pointers
+- **Isolation**: Toggling a pad group triggers `doRecomputeClearance()` — uses `comp.visiblePads()` to include only visible pad groups in clearance computation
+- **G-Code**: `generateThread()` collects disabled pad apertures from canvas pad groups into `PipelineParams::disabledPadApertures`. `filterCopperByVisibility()` excludes disabled aperture pad groups from copper union
 
 ### SimpleWindow is a Singleton
 

@@ -597,6 +597,13 @@ void rebuildLayerPanel() {
         g_layerItems.push_back({false, flag});
     };
 
+    auto addSubSubItem = [](const wchar_t* name, bool visible, bool* flag) {
+        std::wstring text = visible ? L"          \u2611 " : L"          \u2610 ";
+        text += name;
+        SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
+        g_layerItems.push_back({false, flag});
+    };
+
     // ── Board ──
     addSection(L"Board");
     addItem(L"Board Outline", lay.outline, &lay.outline);
@@ -607,13 +614,35 @@ void rebuildLayerPanel() {
         if (pres.copperTop) {
             addItem(L"Copper Top (F_Cu)", lay.copperTop, &lay.copperTop);
             if (pres.copperTopSub.traces)  addSubItem(L"Traces",  lay.copperTopSub.traces,  &lay.copperTopSub.traces);
-            if (pres.copperTopSub.pads)    addSubItem(L"Pads",    lay.copperTopSub.pads,    &lay.copperTopSub.pads);
+            if (pres.copperTopSub.pads) {
+                addSubItem(L"Pads", lay.copperTopSub.pads, &lay.copperTopSub.pads);
+                auto* pgTop = g_canvas->copperTopPadGroups();
+                if (pgTop) {
+                    for (auto& pg : *pgTop) {
+                        std::wstring wname = StringUtils::utf8ToWide(pg.name);
+                        wchar_t buf[128];
+                        _snwprintf(buf, 128, L"%ls (%d)", wname.c_str(), pg.count);
+                        addSubSubItem(buf, pg.visible, &pg.visible);
+                    }
+                }
+            }
             if (pres.copperTopSub.regions) addSubItem(L"Regions", lay.copperTopSub.regions, &lay.copperTopSub.regions);
         }
         if (pres.copperBottom) {
             addItem(L"Copper Bottom (B_Cu)", lay.copperBottom, &lay.copperBottom);
             if (pres.copperBottomSub.traces)  addSubItem(L"Traces",  lay.copperBottomSub.traces,  &lay.copperBottomSub.traces);
-            if (pres.copperBottomSub.pads)    addSubItem(L"Pads",    lay.copperBottomSub.pads,    &lay.copperBottomSub.pads);
+            if (pres.copperBottomSub.pads) {
+                addSubItem(L"Pads", lay.copperBottomSub.pads, &lay.copperBottomSub.pads);
+                auto* pgBot = g_canvas->copperBottomPadGroups();
+                if (pgBot) {
+                    for (auto& pg : *pgBot) {
+                        std::wstring wname = StringUtils::utf8ToWide(pg.name);
+                        wchar_t buf[128];
+                        _snwprintf(buf, 128, L"%ls (%d)", wname.c_str(), pg.count);
+                        addSubSubItem(buf, pg.visible, &pg.visible);
+                    }
+                }
+            }
             if (pres.copperBottomSub.regions) addSubItem(L"Regions", lay.copperBottomSub.regions, &lay.copperBottomSub.regions);
         }
     }
@@ -694,7 +723,7 @@ void doRecomputeClearance() {
     // Build filtered copper from components using current sub-vis
     geo::Paths filtered;
     if (subVis.traces  && !comp.traces.empty())  { auto u = geo::unionAll(comp.traces);  filtered.insert(filtered.end(), u.begin(), u.end()); }
-    if (subVis.pads    && !comp.pads.empty())    { auto u = geo::unionAll(comp.pads);    filtered.insert(filtered.end(), u.begin(), u.end()); }
+    if (subVis.pads) { auto vp = comp.visiblePads(); if (!vp.empty()) { auto u = geo::unionAll(vp); filtered.insert(filtered.end(), u.begin(), u.end()); } }
     if (subVis.regions && !comp.regions.empty()) { auto u = geo::unionAll(comp.regions); filtered.insert(filtered.end(), u.begin(), u.end()); }
     if (!filtered.empty()) filtered = geo::unionAll(filtered);
 
@@ -734,6 +763,10 @@ static void updateCanvasFromPipelineData() {
     g_canvas->setCopperBottomTraces(d.copperBottomComp.traces.empty() ? nullptr : &d.copperBottomComp.traces);
     g_canvas->setCopperBottomPads(d.copperBottomComp.pads.empty() ? nullptr : &d.copperBottomComp.pads);
     g_canvas->setCopperBottomRegions(d.copperBottomComp.regions.empty() ? nullptr : &d.copperBottomComp.regions);
+
+    // Pad groups (per-aperture sub-items)
+    g_canvas->setCopperTopPadGroups(d.copperTopComp.padGroups.empty() ? nullptr : &d.copperTopComp.padGroups);
+    g_canvas->setCopperBottomPadGroups(d.copperBottomComp.padGroups.empty() ? nullptr : &d.copperBottomComp.padGroups);
 
     g_canvas->setMaskTop(d.maskTop.empty() ? nullptr : &d.maskTop);
     g_canvas->setMaskBottom(d.maskBottom.empty() ? nullptr : &d.maskBottom);
@@ -845,6 +878,15 @@ static DWORD WINAPI generateThread(LPVOID) {
             params.copperVis.traces  = sub.traces;
             params.copperVis.pads    = sub.pads;
             params.copperVis.regions = sub.regions;
+
+            // Per-aperture pad filter
+            auto* pgVec = isFlipped ? g_canvas->copperBottomPadGroups() : g_canvas->copperTopPadGroups();
+            if (pgVec) {
+                for (auto& pg : *pgVec) {
+                    if (!pg.visible)
+                        params.disabledPadApertures.insert(pg.apNum);
+                }
+            }
         }
 
         g_lastDebugPath.clear();

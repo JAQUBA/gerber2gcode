@@ -3,6 +3,7 @@
 #include "Geometry/Geometry.h"
 #include "Toolpath/Toolpath.h"
 #include "Drill/DrillParser.h"
+#include "Gerber/GerberParser.h"
 #include <vector>
 #include <map>
 
@@ -111,6 +112,13 @@ public:
 
     CopperSubVis& copperTopSubVis()    { return m_layers.copperTopSub; }
     CopperSubVis& copperBottomSubVis() { return m_layers.copperBottomSub; }
+
+    // Pad groups — per-aperture sub-items (pointers to GerberComponents::padGroups)
+    void setCopperTopPadGroups(std::vector<PadGroup>* p)    { m_copperTopPadGroups = p; }
+    void setCopperBottomPadGroups(std::vector<PadGroup>* p) { m_copperBottomPadGroups = p; }
+    std::vector<PadGroup>* copperTopPadGroups()     { return m_copperTopPadGroups; }
+    std::vector<PadGroup>* copperBottomPadGroups()  { return m_copperBottomPadGroups; }
+
     void setMaskTop(const geo::Paths* p)        { m_maskTop = p; m_presence.maskTop = (p && !p->empty()); }
     void setMaskBottom(const geo::Paths* p)     { m_maskBottom = p; m_presence.maskBottom = (p && !p->empty()); }
     void setSilkTop(const geo::Paths* p)        { m_silkTop = p; m_presence.silkTop = (p && !p->empty()); }
@@ -164,6 +172,8 @@ private:
     const geo::Paths*   m_copperBottomTraces  = nullptr;
     const geo::Paths*   m_copperBottomPads    = nullptr;
     const geo::Paths*   m_copperBottomRegions = nullptr;
+    std::vector<PadGroup>* m_copperTopPadGroups    = nullptr;
+    std::vector<PadGroup>* m_copperBottomPadGroups = nullptr;
     const geo::Paths*   m_maskTop       = nullptr;
     const geo::Paths*   m_maskBottom    = nullptr;
     const geo::Paths*   m_silkTop       = nullptr;

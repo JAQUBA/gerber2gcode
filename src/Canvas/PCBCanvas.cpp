@@ -92,6 +92,7 @@ void PCBCanvas::clearData() {
     m_copperTop = nullptr; m_copperBottom = nullptr;
     m_copperTopTraces = nullptr; m_copperTopPads = nullptr; m_copperTopRegions = nullptr;
     m_copperBottomTraces = nullptr; m_copperBottomPads = nullptr; m_copperBottomRegions = nullptr;
+    m_copperTopPadGroups = nullptr; m_copperBottomPadGroups = nullptr;
     m_maskTop = nullptr;   m_maskBottom = nullptr;
     m_silkTop = nullptr;   m_silkBottom = nullptr;
     m_pasteTop = nullptr;  m_pasteBottom = nullptr;
@@ -126,7 +127,14 @@ void PCBCanvas::onDraw(HDC hdc, const RECT& rc) {
         if (m_copperBottomTraces || m_copperBottomPads || m_copperBottomRegions) {
             if (m_layers.copperBottomSub.regions) drawPolygons(hdc, m_copperBottomRegions, CLR_COPPER_BOT_REGION);
             if (m_layers.copperBottomSub.traces)  drawPolygons(hdc, m_copperBottomTraces,  CLR_COPPER_BOT_TRACE);
-            if (m_layers.copperBottomSub.pads)    drawPolygons(hdc, m_copperBottomPads,    CLR_COPPER_BOT_PAD);
+            if (m_layers.copperBottomSub.pads) {
+                if (m_copperBottomPadGroups && !m_copperBottomPadGroups->empty()) {
+                    for (auto& pg : *m_copperBottomPadGroups)
+                        if (pg.visible) drawPolygons(hdc, &pg.paths, CLR_COPPER_BOT_PAD);
+                } else {
+                    drawPolygons(hdc, m_copperBottomPads, CLR_COPPER_BOT_PAD);
+                }
+            }
         } else {
             drawPolygons(hdc, m_copperBottom, CLR_COPPER_BOT);
         }
@@ -137,7 +145,14 @@ void PCBCanvas::onDraw(HDC hdc, const RECT& rc) {
         if (m_copperTopTraces || m_copperTopPads || m_copperTopRegions) {
             if (m_layers.copperTopSub.regions) drawPolygons(hdc, m_copperTopRegions, CLR_COPPER_TOP_REGION);
             if (m_layers.copperTopSub.traces)  drawPolygons(hdc, m_copperTopTraces,  CLR_COPPER_TOP_TRACE);
-            if (m_layers.copperTopSub.pads)    drawPolygons(hdc, m_copperTopPads,    CLR_COPPER_TOP_PAD);
+            if (m_layers.copperTopSub.pads) {
+                if (m_copperTopPadGroups && !m_copperTopPadGroups->empty()) {
+                    for (auto& pg : *m_copperTopPadGroups)
+                        if (pg.visible) drawPolygons(hdc, &pg.paths, CLR_COPPER_TOP_PAD);
+                } else {
+                    drawPolygons(hdc, m_copperTopPads, CLR_COPPER_TOP_PAD);
+                }
+            }
         } else {
             drawPolygons(hdc, m_copperTop, CLR_COPPER_TOP);
         }

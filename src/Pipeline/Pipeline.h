@@ -36,6 +36,8 @@ struct PipelineParams {
     std::set<std::string> disabledDrillDiameters;
     // Copper sub-layer filter — which copper features to include
     CopperVisibility copperVis;
+    // Per-aperture pad filter — aperture D-codes listed here are excluded
+    std::set<int> disabledPadApertures;
 };
 
 struct KicadFiles {

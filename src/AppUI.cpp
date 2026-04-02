@@ -163,7 +163,7 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
             if (!item.isSection && item.flag) {
                 *item.flag = !(*item.flag);
 
-                // Check if toggled flag belongs to copper sub-visibility
+                // Check if toggled flag belongs to copper sub-visibility or pad group
                 bool isCopperSub = false;
                 {
                     auto& topSub = g_canvas->copperTopSubVis();
@@ -171,6 +171,13 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
                     if (item.flag == &topSub.traces || item.flag == &topSub.pads || item.flag == &topSub.regions ||
                         item.flag == &botSub.traces || item.flag == &botSub.pads || item.flag == &botSub.regions) {
                         isCopperSub = true;
+                    }
+                    // Also check per-aperture pad group visibility
+                    if (!isCopperSub) {
+                        auto* pgTop = g_canvas->copperTopPadGroups();
+                        auto* pgBot = g_canvas->copperBottomPadGroups();
+                        if (pgTop) for (auto& pg : *pgTop) { if (item.flag == &pg.visible) { isCopperSub = true; break; } }
+                        if (!isCopperSub && pgBot) for (auto& pg : *pgBot) { if (item.flag == &pg.visible) { isCopperSub = true; break; } }
                     }
                 }
 
