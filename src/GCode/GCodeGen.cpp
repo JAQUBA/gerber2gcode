@@ -209,6 +209,11 @@ std::string generateGCode(
         out << "; === Engraver: isolation milling ===\n";
         out << "; Tool diameter: " << mc.engraver_tip_width << " mm\n";
         out << "; XY feed: " << engraveFeed << " mm/min, plunge: " << engravePlungeFeed << " mm/min\n";
+
+        if (job.engraver_spindle_on) {
+            ensureSpindleOn();
+        }
+
         out << "G0 " << fmtZ(zEngraveSafe) << "\n";
 
         for (auto& contour : contours) {
@@ -250,6 +255,11 @@ std::string generateGCode(
                 << fmtF(mc.move_feedrate) << "\n";
             out << "G1 " << fmtZ(zDrill) << " "
                 << fmtF(spindleFeed) << "\n";
+            if (job.drill_dwell > 0.0) {
+                char dwBuf[40];
+                _snprintf(dwBuf, sizeof(dwBuf), "G4 P%.3f ; dwell\n", job.drill_dwell);
+                out << dwBuf;
+            }
             out << "G1 " << fmtZ(zDrillPre) << " "
                 << fmtF(spindleFeed) << "\n";
             out << "G0 " << fmtZ(zSpindleSafe) << "\n";
@@ -360,6 +370,7 @@ double estimateJobTime(
             total += std::hypot(h.x - prevX, h.y - prevY) / (mc.move_feedrate / 60.0);
             total += std::abs(zDrillHome - zDrillPre) / (mc.move_feedrate / 60.0);
             total += std::abs(zDrillPre - zDrill) / (spindleFeed / 60.0);
+            if (job.drill_dwell > 0.0) total += job.drill_dwell;
             total += std::abs(zDrillPre - zDrill) / (spindleFeed / 60.0);
             total += std::abs(zDrillHome - zDrillPre) / (mc.move_feedrate / 60.0);
             prevX = h.x; prevY = h.y;

@@ -56,6 +56,9 @@ CheckBox*      g_chkFlip       = nullptr;
 CheckBox*      g_chkIgnoreVia  = nullptr;
 CheckBox*      g_chkDebug      = nullptr;
 CheckBox*      g_chkFluidNC    = nullptr;
+CheckBox*      g_chkEngraverSpindle = nullptr;
+
+InputField*    g_fldDrillDwell = nullptr;
 
 Button*        g_btnTool       = nullptr;
 Button*        g_btnGenerate   = nullptr;
@@ -222,6 +225,8 @@ static void applyPresetManagedValues(const ToolPreset& tp) {
     if (g_chkFlip)      g_chkFlip->setChecked(tp.flip);
     if (g_chkIgnoreVia) g_chkIgnoreVia->setChecked(tp.ignoreVia);
     if (g_chkDebug)     g_chkDebug->setChecked(tp.debugImage);
+    if (g_chkEngraverSpindle) g_chkEngraverSpindle->setChecked(tp.engraverSpindle);
+    if (g_fldDrillDwell) g_fldDrillDwell->setText(dblStr(tp.drillDwell, 3).c_str());
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -267,6 +272,8 @@ void loadSettings() {
     if (g_chkIgnoreVia)  g_chkIgnoreVia->setChecked(s.getValue("ignore_via", "0") == "1");
     if (g_chkDebug)      g_chkDebug->setChecked(s.getValue("debug_image", "1") == "1");
     if (g_chkFluidNC)    g_chkFluidNC->setChecked(s.getValue("post_profile", "mach3") == "fluidnc");
+    if (g_chkEngraverSpindle) g_chkEngraverSpindle->setChecked(s.getValue("engraver_spindle", "0") == "1");
+    if (g_fldDrillDwell) g_fldDrillDwell->setText(s.getValue("drill_dwell", "0").c_str());
 
     // Load layer visibility from settings
     if (g_canvas) {
@@ -305,6 +312,8 @@ void saveSettings() {
     if (g_chkIgnoreVia)  s.setValue("ignore_via",    g_chkIgnoreVia->isChecked() ? "1" : "0");
     if (g_chkDebug)      s.setValue("debug_image",   g_chkDebug->isChecked() ? "1" : "0");
     if (g_chkFluidNC)    s.setValue("post_profile",  g_chkFluidNC->isChecked() ? "fluidnc" : "mach3");
+    if (g_chkEngraverSpindle) s.setValue("engraver_spindle", g_chkEngraverSpindle->isChecked() ? "1" : "0");
+    if (g_fldDrillDwell) s.setValue("drill_dwell",   g_fldDrillDwell->getText());
 
     // Save layer visibility from canvas
     if (g_canvas) {
@@ -344,6 +353,8 @@ void createDefaultToolPresets() {
         tp.flip = false;
         tp.ignoreVia = false;
         tp.debugImage = true;
+        tp.engraverSpindle = false;
+        tp.drillDwell = 0.0;
         tp.kind = kind;
         g_toolPresets.push_back(tp);
     };
@@ -419,6 +430,8 @@ void loadToolPresets() {
             tp.flip         = tc.getValue(p + "flip", "0") == "1";
             tp.ignoreVia    = tc.getValue(p + "ignoreVia", "0") == "1";
             tp.debugImage   = tc.getValue(p + "debugImage", "1") == "1";
+            tp.engraverSpindle = tc.getValue(p + "engraverSpindle", "0") == "1";
+            tp.drillDwell   = parseD(tc.getValue(p + "drillDwell", "0"));
             g_toolPresets.push_back(tp);
         }
     } else {
@@ -456,6 +469,8 @@ void saveToolPresets() {
         tc.setValue(p + "flip",         tp.flip ? "1" : "0");
         tc.setValue(p + "ignoreVia",    tp.ignoreVia ? "1" : "0");
         tc.setValue(p + "debugImage",   tp.debugImage ? "1" : "0");
+        tc.setValue(p + "engraverSpindle", tp.engraverSpindle ? "1" : "0");
+        tc.setValue(p + "drillDwell",   dblStr(tp.drillDwell, 3));
         tc.setValue(p + "kind",         presetKindToKey(tp.kind));
     }
     tc.setValue("active_tool", intStr(g_activeToolIndex));
@@ -561,6 +576,8 @@ static HWND s_hToolDrDia = nullptr;
 static HWND s_hToolDrF   = nullptr;
 static HWND s_hToolOverlap = nullptr;
 static HWND s_hToolOffset  = nullptr;
+static HWND s_hToolDrillDwell = nullptr;
+static HWND s_hToolEngSpindle = nullptr;
 static int  s_toolSel    = -1;
 
 static void toolDlgPopulate(int idx) {
@@ -576,6 +593,8 @@ static void toolDlgPopulate(int idx) {
         SetWindowTextW(s_hToolDrF, L"");
         SetWindowTextW(s_hToolOverlap, L"");
         SetWindowTextW(s_hToolOffset, L"");
+        SetWindowTextW(s_hToolDrillDwell, L"");
+        if (s_hToolEngSpindle) SendMessageW(s_hToolEngSpindle, BM_SETCHECK, BST_UNCHECKED, 0);
         return;
     }
     const auto& tp = g_toolPresets[idx];
@@ -590,6 +609,9 @@ static void toolDlgPopulate(int idx) {
     SetWindowTextW(s_hToolDrF,   StringUtils::utf8ToWide(dblStr(tp.drillFeed, 1)).c_str());
     SetWindowTextW(s_hToolOverlap, StringUtils::utf8ToWide(dblStr(tp.overlap, 2)).c_str());
     SetWindowTextW(s_hToolOffset,  StringUtils::utf8ToWide(dblStr(tp.offset, 2)).c_str());
+    SetWindowTextW(s_hToolDrillDwell, StringUtils::utf8ToWide(dblStr(tp.drillDwell, 3)).c_str());
+    if (s_hToolEngSpindle) SendMessageW(s_hToolEngSpindle, BM_SETCHECK,
+        tp.engraverSpindle ? BST_CHECKED : BST_UNCHECKED, 0);
 }
 
 static void toolDlgSave(int idx) {
@@ -607,6 +629,9 @@ static void toolDlgSave(int idx) {
     GetWindowTextW(s_hToolDrF, buf, 128);   tp.drillFeed    = parseD(StringUtils::wideToUtf8(buf));
     GetWindowTextW(s_hToolOverlap, buf, 128); tp.overlap    = parseD(StringUtils::wideToUtf8(buf));
     GetWindowTextW(s_hToolOffset, buf, 128);  tp.offset     = parseD(StringUtils::wideToUtf8(buf));
+    GetWindowTextW(s_hToolDrillDwell, buf, 128); tp.drillDwell = parseD(StringUtils::wideToUtf8(buf));
+    tp.engraverSpindle = s_hToolEngSpindle
+        ? (SendMessageW(s_hToolEngSpindle, BM_GETCHECK, 0, 0) == BST_CHECKED) : false;
     tp.kind = inferPresetKindFromName(tp.name);
 }
 
@@ -651,6 +676,13 @@ static LRESULT CALLBACK ToolDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             mkField(8, L"Sp. Feed:", s_hToolDrF,   109);
             mkField(9, L"Overlap:", s_hToolOverlap, 114);
             mkField(10, L"Offset:", s_hToolOffset, 115);
+            mkField(11, L"Dwell (s):", s_hToolDrillDwell, 116);
+
+            // Engraver spindle checkbox
+            s_hToolEngSpindle = CreateWindowExW(0, L"BUTTON", L"Engr. M3",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                fx, 15 + 12 * 28 + 2, fw, 20,
+                hwnd, (HMENU)117, _core.hInstance, NULL);
 
             // Buttons
             CreateWindowExW(0, L"BUTTON", L"Add", WS_CHILD | WS_VISIBLE,
@@ -658,9 +690,9 @@ static LRESULT CALLBACK ToolDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             CreateWindowExW(0, L"BUTTON", L"Remove", WS_CHILD | WS_VISIBLE,
                 105, lbH + 20, 80, 26, hwnd, (HMENU)111, _core.hInstance, NULL);
             CreateWindowExW(0, L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE,
-                fx, 15 + 11 * 28, 80, 26, hwnd, (HMENU)112, _core.hInstance, NULL);
+                fx, 15 + 13 * 28, 80, 26, hwnd, (HMENU)112, _core.hInstance, NULL);
             CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                fx + 90, 15 + 11 * 28, 80, 26, hwnd, (HMENU)113, _core.hInstance, NULL);
+                fx + 90, 15 + 13 * 28, 80, 26, hwnd, (HMENU)113, _core.hInstance, NULL);
 
             toolDlgRefreshList(g_activeToolIndex);
             s_toolSel = g_activeToolIndex;
@@ -769,12 +801,12 @@ void doShowToolPresets() {
     RECT pr;
     GetWindowRect(g_window->getHandle(), &pr);
     int cx = (pr.left + pr.right) / 2 - 240;
-    int cy = (pr.top + pr.bottom) / 2 - 170;
+    int cy = (pr.top + pr.bottom) / 2 - 210;
 
     CreateWindowExW(WS_EX_DLGMODALFRAME,
         L"G2G_ToolPresets", L"Tool Presets",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-        cx, cy, 480, 394,
+        cx, cy, 480, 450,
         g_window->getHandle(), NULL, _core.hInstance, NULL);
 }
 
@@ -801,8 +833,10 @@ Config buildConfigFromGUI() {
 
     cfg.job.engraver_feedrate  = d(g_fldFeedXY);
     cfg.job.engraver_plunge_feedrate = d(g_fldFeedZ);
+    cfg.job.engraver_spindle_on = g_chkEngraverSpindle && g_chkEngraverSpindle->isChecked();
     cfg.job.spindle_feedrate   = d(g_fldDrillFeed);
     cfg.job.spindle_power      = 255;
+    cfg.job.drill_dwell        = d(g_fldDrillDwell);
     cfg.job.postProfile        = (g_chkFluidNC && g_chkFluidNC->isChecked())
         ? PostProfile::FluidNC
         : PostProfile::Mach3;

@@ -46,14 +46,14 @@ gerber2gcode/
 |--------|---------------|
 | **main.cpp** | `init()` (COM init), `setup()` (window + menu + UI + canvas), `loop()` (empty — event-driven). Minimal, delegates everything. |
 | **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). `applyActiveToolPreset()` auto-applies tool kind workflow: generation mode mapping (Isolation / Combo / Drill / Cutout), CAM defaults (overlap/offset), XY/flip/via reset, and redraw/reparse scheduling. Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates + `doRecomputeClearance()` for copper sub-layer visibility changes. Layer panel: `rebuildLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
-| **AppUI** | `createUI(SimpleWindow*)` — polished 3-row toolbar with section headers (Project / Machining / Position), styled action buttons, themed numeric fields, canvas, wider layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Auto-managed machining controls (feeds/depths/overlap/offset/drill/XY/Flip/No Vias/Debug) are read-only or disabled; workflow expects selecting a tool preset and editing mainly `Mat` (material thickness). Browse KiCad button immediately loads and previews the selected directory. |
+| **AppUI** | `createUI(SimpleWindow*)` — polished 3-row toolbar with section headers (Project / Machining / Position), styled action buttons, themed numeric fields, canvas, wider layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Auto-managed machining controls (feeds/depths/overlap/offset/drill/XY/Flip/No Vias/Debug/Eng M3/Dwell) are read-only or disabled; workflow expects selecting a tool preset and editing mainly `Mat` (material thickness). Browse KiCad button immediately loads and previews the selected directory. |
 | **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom) with per-component sub-layers (traces/pads/regions in distinct color shades), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` with `CopperSubVis` / `CopperSubPresence` structs. `DrillFilter` groups holes by diameter for per-diameter visibility. `zoomToFit()`. Back-to-front rendering order. |
 | **Config** | `Config` struct with `MachineConfig` (engraver Z, tip width, drill Z, feedrates, offsets), `CamConfig` (overlap, offset), `JobConfig` (engraver/spindle/laser feedrates). `loadConfig()` — minimal JSON parser. |
 | **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Two output modes: `parseGerber()` → `geo::Paths` (flat union), `parseGerberComponents()` → `GerberComponents` (categorized: traces=D01, pads=D03, regions=G36/G37). `PadGroup` struct groups D03 flashes by aperture D-code with human-readable names (e.g. "Circle Ø0.800mm", "Rect 1.27×0.64mm"). `GerberComponents::combined()` unions all categories. `GerberComponents::visiblePads()` unions only visible pad groups. |
 | **DrillParser** | Excellon parser: tool table (`TnnCdia`), coordinates, METRIC/INCH units, rout mode (M15/M16), slotted holes (G85 — skipped), via filtering. Outputs `std::vector<DrillHole>`. |
 | **Geometry** | `geo::` namespace — Clipper2 type aliases (`Point`, `Path`, `Paths`). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
 | **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. |
-| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — Mach3/FluidNC-compatible G0/G1 output with isolation + drilling + cutout sections. Multi-pass depth cutting for cutout. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
+| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — Mach3/FluidNC-compatible G0/G1 output with isolation + drilling + cutout sections. Multi-pass depth cutting for cutout. Optional engraver spindle (M3) before isolation. Optional drill dwell (G4) at hole bottom. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
 | **Pipeline** | `detectKicadFiles(dir)` — auto-detect layers by filename suffix. `runPipeline(params, log, result)` — full workflow (parse → normalize → clip → isolate → order → generate → export). `parsePipelineData(params, log)` — parse-only for live preview. |
 | **DebugImage** | `generateDebugBMP(gcodePath, outputPath, config, holes)` — re-parses G-Code, renders as 24-bit BMP for visual validation. |
 
@@ -194,6 +194,9 @@ M5 ; spindle off
 G0 Z6.5000 ; initial safe Z
 
 ; === Engraver: isolation milling ===
+; (optional, if engraver_spindle_on=true:)
+; M3 S255 ; spindle on
+; G4 P1.0 ; spindle settle
 G0 Z6.5000
 G0 X10.000 Y20.000       ; rapid to contour start
 G1 Z1.4500 F150          ; plunge at half feed
@@ -206,6 +209,8 @@ G4 P1.0 ; spindle settle
 G0 X5.000 Y10.000
 G1 Z2.5000 F2400         ; approach (pre-drill Z)
 G1 Z0.0000 F50           ; drill plunge (through material to bed)
+; (optional, if drill_dwell > 0:)
+; G4 P0.500 ; dwell
 G1 Z2.5000 F50           ; retract
 G0 Z6.5000               ; safe height
 
@@ -318,6 +323,8 @@ Steps 1–7 only — returns `PipelineResult` with parsed geometry for immediate
 | `gen_isolation` | Generate isolation G-Code | `1` |
 | `gen_drilling` | Generate drilling G-Code | `1` |
 | `gen_cutout` | Generate cutout G-Code | `0` |
+| `engraver_spindle` | M3 spindle on before isolation milling | `0` |
+| `drill_dwell` | Dwell at drill bottom (seconds, 0=disabled) | `0` |
 
 ### tools.ini (Tool Presets)
 
@@ -340,6 +347,8 @@ Steps 1–7 only — returns `PipelineResult` with parsed geometry for immediate
 | `tool_N_flip` | Mirror board for bottom workflow (0/1) |
 | `tool_N_ignoreVia` | Skip via holes (0/1) |
 | `tool_N_debugImage` | Generate debug BMP (0/1) |
+| `tool_N_engraverSpindle` | M3 spindle on before isolation (0/1) |
+| `tool_N_drillDwell` | Dwell at drill bottom (seconds, 0=disabled) |
 | `active_tool` | Active preset index |
 
 ### Default Tool Presets (28)

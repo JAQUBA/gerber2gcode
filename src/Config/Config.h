@@ -40,8 +40,10 @@ enum class PostProfile {
 struct JobConfig {
     double engraver_feedrate;       // cutting feedrate (mm/min)
     double engraver_plunge_feedrate = 100.0;
+    bool   engraver_spindle_on = false; // M3 before isolation (for motorized engravers)
     double spindle_power;
     double spindle_feedrate;        // spindle feedrate for drilling/cutout (mm/min)
+    double drill_dwell = 0.0;      // dwell at drill bottom (seconds, 0 = disabled)
     PostProfile postProfile = PostProfile::Mach3;
     // Laser (reserved for future use)
     double laser_power = 0;

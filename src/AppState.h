@@ -46,6 +46,8 @@ struct ToolPreset {
     bool   flip             = false;    // mirror board
     bool   ignoreVia        = false;    // skip via holes
     bool   debugImage       = true;     // emit debug BMP
+    bool   engraverSpindle  = false;    // M3 before isolation (motorized engraver)
+    double drillDwell       = 0.0;      // dwell at drill bottom (seconds, 0=off)
     ToolPresetKind kind     = ToolPresetKind::Isolation;
 };
 
@@ -98,6 +100,10 @@ extern CheckBox*      g_chkFlip;
 extern CheckBox*      g_chkIgnoreVia;
 extern CheckBox*      g_chkDebug;
 extern CheckBox*      g_chkFluidNC;
+extern CheckBox*      g_chkEngraverSpindle;
+
+// Drill dwell field
+extern InputField*    g_fldDrillDwell;
 
 // Tool dropdown button
 extern Button*        g_btnTool;

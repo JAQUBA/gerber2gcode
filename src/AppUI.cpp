@@ -418,6 +418,13 @@ void createUI(SimpleWindow* win) {
     win->add(g_chkFluidNC);
     styleCheck(g_chkFluidNC);
 
+    g_chkEngraverSpindle = new CheckBox(m + 1178, y + 1, 80, 24, "Eng M3", false);
+    win->add(g_chkEngraverSpindle);
+    styleCheck(g_chkEngraverSpindle);
+
+    addLabel(win, m + 1266, y + 3, 48, L"Dwell:");
+    g_fldDrillDwell = addField(win, m + 1316, y, 48, "0");
+
     // Auto-managed workflow: these options are derived from selected tool preset.
     // User should mainly provide material thickness (Mat).
     if (g_fldToolDia)    g_fldToolDia->setReadOnly(true);
@@ -432,6 +439,7 @@ void createUI(SimpleWindow* win) {
     if (g_fldDrillFeed)  g_fldDrillFeed->setReadOnly(true);
     if (g_fldXOffset)    g_fldXOffset->setReadOnly(true);
     if (g_fldYOffset)    g_fldYOffset->setReadOnly(true);
+    if (g_fldDrillDwell) g_fldDrillDwell->setReadOnly(true);
 
     if (g_chkFlip && g_chkFlip->getHandle())
         EnableWindow(g_chkFlip->getHandle(), FALSE);
@@ -439,6 +447,8 @@ void createUI(SimpleWindow* win) {
         EnableWindow(g_chkIgnoreVia->getHandle(), FALSE);
     if (g_chkDebug && g_chkDebug->getHandle())
         EnableWindow(g_chkDebug->getHandle(), FALSE);
+    if (g_chkEngraverSpindle && g_chkEngraverSpindle->getHandle())
+        EnableWindow(g_chkEngraverSpindle->getHandle(), FALSE);
 
     // ── Row 3: Paths and browse actions ─────────────────────────────────
     y += rowH + rowGap;
