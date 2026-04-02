@@ -143,6 +143,7 @@ public:
     // Data setters — generated
     void setClearance(const geo::Paths* p)                          { m_clearance = p; m_presence.clearance = (p && !p->empty()); }
     void setContours(const std::vector<ToolpathContour>* p)         { m_contours = p; m_presence.isolation = (p && !p->empty()); }
+    void setCutout(const std::vector<geo::Point>* p)                { m_cutout = p; m_presence.cutout = (p && !p->empty()); }
 
     void zoomToFit(double boardW, double boardH);
     void clearData();
@@ -154,6 +155,7 @@ private:
     void drawOutline(HDC hdc);
     void drawPolygons(HDC hdc, const geo::Paths* paths, COLORREF color);
     void drawIsolation(HDC hdc);
+    void drawCutout(HDC hdc);
     void drawDrills(HDC hdc, const std::vector<DrillHole>* drills,
                     const std::vector<DrillFilter>& filters, COLORREF color);
     void buildDrillFilters(const std::vector<DrillHole>* drills,
@@ -190,4 +192,5 @@ private:
     // Generated
     const geo::Paths*                       m_clearance = nullptr;
     const std::vector<ToolpathContour>*     m_contours  = nullptr;
+    const std::vector<geo::Point>*          m_cutout    = nullptr;
 };

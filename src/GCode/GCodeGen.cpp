@@ -104,6 +104,7 @@ static std::string fmtS(double s) {
 std::string generateGCode(
     const std::vector<ToolpathContour>& contours,
     const std::vector<DrillHole>& holes,
+    const std::vector<geo::Point>& cutoutPath,
     const Config& config,
     double xOffset, double yOffset)
 {
@@ -133,6 +134,15 @@ std::string generateGCode(
                 char buf[80];
                 _snprintf(buf, sizeof(buf), "drill (%.4f, %.4f)", fx, fy);
                 oob.push_back(buf);
+            }
+        }
+        for (auto& pt : cutoutPath) {
+            double fx = pt.x + xOffset, fy = pt.y + yOffset;
+            if (fx < 0 || fx > mc.x_size || fy < 0 || fy > mc.y_size) {
+                char buf[80];
+                _snprintf(buf, sizeof(buf), "cutout (%.4f, %.4f)", fx, fy);
+                oob.push_back(buf);
+                break;
             }
         }
         if (!oob.empty()) {
@@ -203,6 +213,46 @@ std::string generateGCode(
         out << "\n";
     }
 
+    // ── Cutout (multi-pass depth) ────────────────────────────────────────
+    if (!cutoutPath.empty()) {
+        out << "; === Board cutout ===\n";
+        out << "G0 " << fmtZ(zTravel) << "\n";
+
+        // Calculate depth passes
+        double depthPerPass = mc.cutout_z_cut;    // negative
+        double finalZ = mc.cutout_z_final;         // negative (through material)
+        if (depthPerPass >= 0) depthPerPass = -0.5;
+        if (finalZ >= 0) finalZ = -1.6;
+
+        double currentZ = 0.0;
+        int passNum = 0;
+        while (currentZ > finalZ + 0.001) {
+            currentZ += depthPerPass;
+            if (currentZ < finalZ) currentZ = finalZ;
+            passNum++;
+
+            out << "; --- Pass " << passNum << " Z=" << fmtZ(currentZ).substr(1) << " ---\n";
+
+            // Rapid to start position
+            out << "G0 " << fmtXY(cutoutPath[0].x, cutoutPath[0].y, xOffset, yOffset) << "\n";
+            // Plunge to current pass depth
+            out << "G1 " << fmtZ(currentZ) << " " << fmtF(job.engraver_feedrate / 2.0) << "\n";
+
+            // Cut along outline
+            for (size_t i = 1; i < cutoutPath.size(); i++) {
+                out << "G1 " << fmtXY(cutoutPath[i].x, cutoutPath[i].y, xOffset, yOffset) << " "
+                    << fmtF(job.engraver_feedrate) << "\n";
+            }
+            // Close the loop
+            out << "G1 " << fmtXY(cutoutPath[0].x, cutoutPath[0].y, xOffset, yOffset) << " "
+                << fmtF(job.engraver_feedrate) << "\n";
+            // Retract
+            out << "G0 " << fmtZ(zTravel) << "\n";
+        }
+
+        out << "\n";
+    }
+
     out << "G0 " << fmtZ(mc.engraver_z_travel) << " ; safe Z\n";
     out << "G0 X0 Y0 ; return home\n";
     out << "M84 ; motors off\n";
@@ -215,6 +265,7 @@ std::string generateGCode(
 double estimateJobTime(
     const std::vector<ToolpathContour>& contours,
     const std::vector<DrillHole>& holes,
+    const std::vector<geo::Point>& cutoutPath,
     const Config& config)
 {
     auto& mc  = config.machine;
@@ -256,6 +307,34 @@ double estimateJobTime(
             total += std::abs(mc.spindle_z_home - mc.spindle_z_pre_drill) / (mc.move_feedrate / 60.0);
             prevX = h.x; prevY = h.y;
         }
+    }
+
+    // Cutout time estimation (multi-pass)
+    if (!cutoutPath.empty()) {
+        double depthPerPass = mc.cutout_z_cut;
+        double finalZ = mc.cutout_z_final;
+        if (depthPerPass >= 0) depthPerPass = -0.5;
+        if (finalZ >= 0) finalZ = -1.6;
+
+        // Compute outline perimeter
+        double perim = 0.0;
+        for (size_t i = 1; i < cutoutPath.size(); i++)
+            perim += std::hypot(cutoutPath[i].x - cutoutPath[i-1].x,
+                               cutoutPath[i].y - cutoutPath[i-1].y);
+        perim += std::hypot(cutoutPath[0].x - cutoutPath.back().x,
+                           cutoutPath[0].y - cutoutPath.back().y);
+
+        int nPasses = 0;
+        double cz = 0.0;
+        while (cz > finalZ + 0.001) {
+            cz += depthPerPass;
+            if (cz < finalZ) cz = finalZ;
+            nPasses++;
+        }
+        double zTravel = mc.engraver_z_travel;
+        double zDelta = std::abs(zTravel - finalZ);
+        total += nPasses * (perim / (engFeed / 60.0));               // cutting
+        total += nPasses * 2.0 * zDelta / (engFeed / 2.0 / 60.0);   // plunge/retract
     }
 
     return total;

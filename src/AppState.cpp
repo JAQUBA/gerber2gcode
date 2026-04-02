@@ -557,6 +557,10 @@ Config buildConfigFromGUI() {
     cfg.job.spindle_feedrate   = d(g_fldDrillFeed);
     cfg.job.spindle_power      = 255;
 
+    // Cutout
+    double mat = d(g_fldMaterial);
+    if (mat > 0) cfg.machine.cutout_z_final = -mat;
+
     return cfg;
 }
 
@@ -681,10 +685,11 @@ void rebuildLayerPanel() {
     }
 
     // ── Generated ──
-    if (pres.clearance || pres.isolation) {
+    if (pres.clearance || pres.isolation || pres.cutout) {
         addSection(L"Generated");
         if (pres.clearance)    addItem(L"Clearance",       lay.clearance,  &lay.clearance);
         if (pres.isolation)    addItem(L"Isolation Paths", lay.isolation,  &lay.isolation);
+        if (pres.cutout)       addItem(L"Cutout",          lay.cutout,     &lay.cutout);
     }
 }
 
@@ -778,6 +783,7 @@ static void updateCanvasFromPipelineData() {
     g_canvas->setDrillsNPTH(d.drillsNPTH.empty() ? nullptr : &d.drillsNPTH);
     g_canvas->setClearance(d.clearance.empty() ? nullptr : &d.clearance);
     g_canvas->setContours(d.contours.empty() ? nullptr : &d.contours);
+    g_canvas->setCutout(d.cutoutPath.empty() ? nullptr : &d.cutoutPath);
     g_canvas->setGridExtent(d.boardW + 10, d.boardH + 10);
     g_canvas->zoomToFit(d.boardW, d.boardH);
     rebuildLayerPanel();

@@ -27,7 +27,7 @@ gerber2gcode/
 │   ├── Toolpath/
 │   │   └── Toolpath.h / .cpp       # Contour-parallel isolation generator + 2-opt contour ordering
 │   ├── GCode/
-│   │   └── GCodeGen.h / .cpp       # G-Code generator with drill ordering + time estimation
+│   │   └── GCodeGen.h / .cpp       # G-Code generator with isolation/drilling/cutout + time estimation
 │   ├── Pipeline/
 │   │   └── Pipeline.h / .cpp       # Orchestration: detect files → parse → isolate → generate
 │   └── Debug/
@@ -53,7 +53,7 @@ gerber2gcode/
 | **DrillParser** | Excellon parser: tool table (`TnnCdia`), coordinates, METRIC/INCH units, rout mode (M15/M16), slotted holes (G85 — skipped), via filtering. Outputs `std::vector<DrillHole>`. |
 | **Geometry** | `geo::` namespace — Clipper2 type aliases (`Point`, `Path`, `Paths`). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
 | **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. |
-| **GCodeGen** | `generateGCode(contours, holes, config, xOff, yOff)` — GRBL-compatible G0/G1 output with isolation + drilling sections. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate based on distances and feedrates. |
+| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — GRBL-compatible G0/G1 output with isolation + drilling + cutout sections. Multi-pass depth cutting for cutout. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
 | **Pipeline** | `detectKicadFiles(dir)` — auto-detect layers by filename suffix. `runPipeline(params, log, result)` — full workflow (parse → normalize → clip → isolate → order → generate → export). `parsePipelineData(params, log)` — parse-only for live preview. |
 | **DebugImage** | `generateDebugBMP(gcodePath, outputPath, config, holes)` — re-parses G-Code, renders as 24-bit BMP for visual validation. |
 
@@ -188,6 +188,20 @@ G0 X0 Y0
 M84 ; motors off
 ```
 
+When cutout is enabled, an additional section is appended after drilling:
+
+```gcode
+; === Cutout ===
+G0 X10.000 Y0.000         ; rapid to cutout start
+G1 Z-0.500 F150           ; plunge to first pass depth
+G1 X50.000 Y0.000 F300    ; cut along outline
+G1 X50.000 Y40.000 F300
+...
+G0 Z5.000                 ; retract after final pass
+```
+
+Cutout uses multi-pass depth: starts at Z=0, descends by `cutout_z_cut` each pass until reaching `cutout_z_final` (material thickness). The cutout path is the board outline offset outward by `tool_radius + cutout_offset`.
+
 ### Drill Optimization
 
 Nearest-neighbor + 2-opt TSP (up to 100 iterations) — minimizes total rapid travel between drill holes.
@@ -309,8 +323,9 @@ Steps 1–7 only — returns `PipelineResult` with parsed geometry for immediate
 5. Silkscreen Bottom / Top
 6. Board outline (yellow polyline, 2px)
 7. Isolation contours (light blue polylines)
-8. Drill holes (circles with center crosses)
-9. Origin marker (crosshair at 0,0)
+8. Cutout path (orange polyline, 2px)
+9. Drill holes (circles with center crosses)
+10. Origin marker (crosshair at 0,0)
 
 ### Layer Colors
 
@@ -329,6 +344,7 @@ Steps 1–7 only — returns `PipelineResult` with parsed geometry for immediate
 | NPTH drills | (220, 160, 40) orange |
 | Clearance | (80, 80, 80) dark gray |
 | Isolation | (80, 200, 240) light blue |
+| Cutout | (240, 140, 40) orange |
 
 ---
 

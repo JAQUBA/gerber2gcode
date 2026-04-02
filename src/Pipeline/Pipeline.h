@@ -83,7 +83,7 @@ struct PipelineResult {
     // Generated layers
     geo::Paths                      clearance;
     std::vector<ToolpathContour>    contours;       // isolation
-    // geo::Path cutoutPath;  // future: cutout
+    std::vector<geo::Point>         cutoutPath;     // cutout (offset outline)
 
     // Output
     std::string gcode;

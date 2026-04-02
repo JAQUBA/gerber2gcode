@@ -26,6 +26,7 @@ static const COLORREF CLR_PTH           = RGB(80, 220, 80);    // PTH drills —
 static const COLORREF CLR_NPTH          = RGB(220, 160, 40);   // NPTH drills — orange
 static const COLORREF CLR_CLEARANCE     = RGB(80, 80, 80);     // Clearance — dim gray
 static const COLORREF CLR_ISOLATION     = RGB(80, 200, 240);   // Isolation — light blue
+static const COLORREF CLR_CUTOUT       = RGB(240, 140, 40);   // Cutout — orange
 static const COLORREF CLR_DRILL_MARK    = RGB(40, 160, 40);    // Drill center cross
 static const COLORREF CLR_ORIGIN        = RGB(120, 120, 140);  // Origin marker
 
@@ -97,7 +98,7 @@ void PCBCanvas::clearData() {
     m_silkTop = nullptr;   m_silkBottom = nullptr;
     m_pasteTop = nullptr;  m_pasteBottom = nullptr;
     m_drillsPTH = nullptr; m_drillsNPTH = nullptr;
-    m_clearance = nullptr; m_contours = nullptr;
+    m_clearance = nullptr; m_contours = nullptr; m_cutout = nullptr;
     m_presence = LayerPresence();
     redraw();
 }
@@ -162,6 +163,7 @@ void PCBCanvas::onDraw(HDC hdc, const RECT& rc) {
     if (m_layers.silkTop)       drawPolygons(hdc, m_silkTop,     CLR_SILK_TOP);
     if (m_layers.outline)       drawOutline(hdc);
     if (m_layers.isolation)     drawIsolation(hdc);
+    if (m_layers.cutout)        drawCutout(hdc);
     if (m_layers.drillsNPTH)    drawDrills(hdc, m_drillsNPTH, m_drillFilterNPTH, CLR_NPTH);
     if (m_layers.drillsPTH)     drawDrills(hdc, m_drillsPTH,  m_drillFilterPTH,  CLR_PTH);
 }
@@ -221,6 +223,23 @@ void PCBCanvas::drawIsolation(HDC hdc) {
         for (size_t i = 1; i < pts.size(); i++)
             LineTo(hdc, toScreenX(pts[i].x), toScreenY(pts[i].y));
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// drawCutout — board cutout path as closed polyline (orange)
+// ════════════════════════════════════════════════════════════════════════════
+
+void PCBCanvas::drawCutout(HDC hdc) {
+    if (!m_cutout || m_cutout->size() < 2) return;
+
+    GdiPen pen(hdc, CLR_CUTOUT, 2);
+    auto& pts = *m_cutout;
+
+    MoveToEx(hdc, toScreenX(pts[0].x), toScreenY(pts[0].y), NULL);
+    for (size_t i = 1; i < pts.size(); i++)
+        LineTo(hdc, toScreenX(pts[i].x), toScreenY(pts[i].y));
+    // Close the loop
+    LineTo(hdc, toScreenX(pts[0].x), toScreenY(pts[0].y));
 }
 
 // ════════════════════════════════════════════════════════════════════════════

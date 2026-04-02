@@ -14,6 +14,10 @@ struct MachineConfig {
     double spindle_z_pre_drill = 1.0;
     double spindle_z_drill = -2.0;
     double spindle_tool_diameter = 0.8;
+    // Cutout
+    double cutout_z_cut = -0.5;           // depth per pass (negative)
+    double cutout_z_final = -1.6;         // final depth (through material)
+    double cutout_offset = 0.0;           // extra offset from outline (mm)
     // General
     double move_feedrate = 2400;
     // Laser (reserved for future use)

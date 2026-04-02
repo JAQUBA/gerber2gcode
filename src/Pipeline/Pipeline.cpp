@@ -281,6 +281,25 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
             log("Isolation: skipped (disabled)");
         }
 
+        // Generate cutout path (board outline offset outward by tool radius)
+        if (params.generateCutout) {
+            double toolR = config.machine.engraver_tip_width / 2.0;
+            double cutoutOff = toolR + config.machine.cutout_offset;
+            geo::Paths outPaths = geo::offset({outline}, cutoutOff);
+            if (!outPaths.empty() && !outPaths[0].empty()) {
+                // Convert Clipper2 Path to simple point vector
+                result.cutoutPath.clear();
+                for (auto& pt : outPaths[0])
+                    result.cutoutPath.push_back(pt);
+                char buf[64];
+                _snprintf(buf, sizeof(buf), "Cutout path: %d points (offset %.3fmm)",
+                         (int)result.cutoutPath.size(), cutoutOff);
+                log(buf);
+            } else {
+                log("Warning: could not generate cutout path");
+            }
+        }
+
         // Collect holes for GCode generation
         std::vector<DrillHole> allHoles;
         if (params.generateDrilling) {
@@ -330,8 +349,9 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
 
         // Generate GCode
         std::vector<ToolpathContour> gContours = params.generateIsolation ? contours : std::vector<ToolpathContour>{};
+        std::vector<geo::Point> gCutout = params.generateCutout ? result.cutoutPath : std::vector<geo::Point>{};
 
-        std::string gcode = generateGCode(gContours, allHoles, config, xOff, yOff);
+        std::string gcode = generateGCode(gContours, allHoles, gCutout, config, xOff, yOff);
         result.gcode = gcode;
         result.valid = true;
         int nLines = 0;
@@ -350,7 +370,7 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
         outFile.close();
 
         // Time estimate
-        double est = estimateJobTime(gContours, allHoles, config);
+        double est = estimateJobTime(gContours, allHoles, gCutout, config);
         int hours = (int)(est / 3600);
         int mins  = (int)((int)est % 3600) / 60;
         int secs  = (int)est % 60;
@@ -451,6 +471,18 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
         geo::Paths filteredCu = filterCopperByVisibility(activeComp, params.copperVis, params.disabledPadApertures);
         filteredCu = geo::intersect(filteredCu, outlinePaths);
         result.clearance = geo::difference(outlinePaths, filteredCu);
+
+        // Generate cutout path for preview
+        {
+            double toolR = params.config.machine.engraver_tip_width / 2.0;
+            double cutoutOff = toolR + params.config.machine.cutout_offset;
+            geo::Paths outPaths = geo::offset({outline}, cutoutOff);
+            if (!outPaths.empty() && !outPaths[0].empty()) {
+                result.cutoutPath.clear();
+                for (auto& pt : outPaths[0])
+                    result.cutoutPath.push_back(pt);
+            }
+        }
 
         result.valid = true;
 
