@@ -32,10 +32,17 @@ struct CamConfig {
     double offset;
 };
 
+enum class PostProfile {
+    Mach3 = 0,
+    FluidNC = 1
+};
+
 struct JobConfig {
     double engraver_feedrate;       // cutting feedrate (mm/min)
+    double engraver_plunge_feedrate = 100.0;
     double spindle_power;
-    double spindle_feedrate;
+    double spindle_feedrate;        // spindle feedrate for drilling/cutout (mm/min)
+    PostProfile postProfile = PostProfile::Mach3;
     // Laser (reserved for future use)
     double laser_power = 0;
     double laser_feedrate = 0;

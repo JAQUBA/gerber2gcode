@@ -93,6 +93,12 @@ static std::string fmtF(double f) {
     return buf;
 }
 
+static std::string fmtSpindleS(double s) {
+    char buf[40];
+    _snprintf(buf, sizeof(buf), "S%.0f", std::max(0.0, s));
+    return buf;
+}
+
 static std::string fmtS(double s) {
     char buf[40];
     _snprintf(buf, sizeof(buf), "S=%.4f", s);
@@ -110,15 +116,20 @@ std::string generateGCode(
 {
     auto& mc  = config.machine;
     auto& job = config.job;
+    double engraveFeed = job.engraver_feedrate > 0 ? job.engraver_feedrate : 300.0;
+    double engravePlungeFeed = job.engraver_plunge_feedrate > 0 ? job.engraver_plunge_feedrate : 100.0;
+    double spindleFeed = job.spindle_feedrate > 0 ? job.spindle_feedrate : 60.0;
+    double spindlePower = job.spindle_power;
 
     // Z coordinate model: Z=0 is machine bed (bottom of material)
     // Material top surface at Z = materialThickness
     double mat     = mc.materialThickness;
-    double zSafe   = mat + mc.engraver_z_travel;                          // e.g., 1.5 + 5.0 = 6.5
-    double zCut    = mat - std::abs(mc.engraver_z_cut);                   // e.g., 1.5 - 0.05 = 1.45
-    double zDrillHome = mat + mc.spindle_z_home;                          // e.g., 1.5 + 5.0 = 6.5
-    double zDrillPre  = mat + mc.spindle_z_pre_drill;                     // e.g., 1.5 + 1.0 = 2.5
-    double zDrill  = std::max(0.0, mat - std::abs(mc.spindle_z_drill));   // e.g., max(0, 1.5-2.0) = 0
+    double zEngraveSafe = mat + mc.engraver_z_travel;                     // e.g., 1.5 + 5.0 = 6.5
+    double zCut    = std::max(0.0, mat - std::abs(mc.engraver_z_cut));    // e.g., max(0, 1.5 - 0.05) = 1.45
+    double zSpindleSafe = mat + mc.spindle_z_home;                        // e.g., 1.5 + 5.0 = 6.5
+    double zDrillPre  = std::max(mat, mat + mc.spindle_z_pre_drill);      // keep pre-drill at/above material top
+    double zDrill  = std::max(0.0, mat - std::abs(mc.spindle_z_drill));   // e.g., max(0, 1.5 - 2.0) = 0
+    double zProgramSafe = std::max(zEngraveSafe, zSpindleSafe);
 
     // Validate all coordinates within machine bounds (skip when size = 0, meaning no limit)
     if (mc.x_size > 0 && mc.y_size > 0) {
@@ -164,15 +175,41 @@ std::string generateGCode(
     std::ostringstream out;
     out << std::fixed << std::setprecision(4);
 
+    bool isFluidNC = (job.postProfile == PostProfile::FluidNC);
+
     out << "; gerber2gcode — CNC PCB isolation engraving\n";
     out << "G21 ; mm\n";
     out << "G90 ; absolute\n";
+    out << "G17 ; XY plane\n";
+    out << "G94 ; feed per minute\n";
+    if (!isFluidNC) out << "G54 ; work offset\n";
+    out << "G40 ; cancel cutter compensation\n";
+    if (!isFluidNC) {
+        out << "G49 ; cancel tool length offset\n";
+        out << "G80 ; cancel canned cycles\n";
+    }
+    out << "M5 ; spindle off\n";
+    out << (isFluidNC ? "; post profile: FluidNC\n" : "; post profile: Mach3\n");
+    out << "G0 " << fmtZ(zProgramSafe) << " ; initial safe Z\n";
     out << "\n";
+
+    bool spindleOn = false;
+    auto ensureSpindleOn = [&]() {
+        if (spindleOn) return;
+        if (spindlePower > 0.0)
+            out << "M3 " << fmtSpindleS(spindlePower) << " ; spindle on\n";
+        else
+            out << "M3 ; spindle on\n";
+        out << "G4 P1.0 ; spindle settle\n";
+        spindleOn = true;
+    };
 
     // ── Engraver isolation milling ───────────────────────────────────────
     if (!contours.empty()) {
         out << "; === Engraver: isolation milling ===\n";
-        out << "G0 " << fmtZ(zSafe) << "\n";
+        out << "; Tool diameter: " << mc.engraver_tip_width << " mm\n";
+        out << "; XY feed: " << engraveFeed << " mm/min, plunge: " << engravePlungeFeed << " mm/min\n";
+        out << "G0 " << fmtZ(zEngraveSafe) << "\n";
 
         for (auto& contour : contours) {
             if (contour.points.empty()) continue;
@@ -182,18 +219,18 @@ std::string generateGCode(
             // Rapid to start position
             out << "G0 " << fmtXY(sx, sy, xOffset, yOffset) << "\n";
             // Plunge to cutting depth
-            out << "G1 " << fmtZ(zCut) << " " << fmtF(job.engraver_feedrate / 2.0) << "\n";
+            out << "G1 " << fmtZ(zCut) << " " << fmtF(engravePlungeFeed) << "\n";
 
             // Cut contour
             for (size_t i = 1; i < pts.size(); i++) {
                 out << "G1 " << fmtXY(pts[i].x, pts[i].y, xOffset, yOffset) << " "
-                    << fmtF(job.engraver_feedrate) << "\n";
+                        << fmtF(engraveFeed) << "\n";
             }
             // Close contour
             out << "G1 " << fmtXY(sx, sy, xOffset, yOffset) << " "
-                << fmtF(job.engraver_feedrate) << "\n";
+                << fmtF(engraveFeed) << "\n";
             // Retract
-            out << "G0 " << fmtZ(zSafe) << "\n";
+            out << "G0 " << fmtZ(zEngraveSafe) << "\n";
         }
 
         out << "\n";
@@ -202,18 +239,20 @@ std::string generateGCode(
     // ── Drilling ─────────────────────────────────────────────────────────
     if (!holes.empty()) {
         out << "; === Drilling ===\n";
-        out << "; NOTE: Change to drill bit manually\n";
-        out << "G0 " << fmtZ(zDrillHome) << "\n";
+        out << "; Spindle tool diameter: " << mc.spindle_tool_diameter << " mm\n";
+        out << "; Spindle feed: " << spindleFeed << " mm/min\n";
+        ensureSpindleOn();
+        out << "G0 " << fmtZ(zSpindleSafe) << "\n";
 
         for (auto& hole : holes) {
             out << "G0 " << fmtXY(hole.x, hole.y, xOffset, yOffset) << "\n";
             out << "G1 " << fmtZ(zDrillPre) << " "
                 << fmtF(mc.move_feedrate) << "\n";
             out << "G1 " << fmtZ(zDrill) << " "
-                << fmtF(job.spindle_feedrate) << "\n";
+                << fmtF(spindleFeed) << "\n";
             out << "G1 " << fmtZ(zDrillPre) << " "
-                << fmtF(job.spindle_feedrate) << "\n";
-            out << "G0 " << fmtZ(zDrillHome) << "\n";
+                << fmtF(spindleFeed) << "\n";
+            out << "G0 " << fmtZ(zSpindleSafe) << "\n";
         }
 
         out << "\n";
@@ -222,7 +261,10 @@ std::string generateGCode(
     // ── Cutout (multi-pass depth) ────────────────────────────────────────
     if (!cutoutPath.empty()) {
         out << "; === Board cutout ===\n";
-        out << "G0 " << fmtZ(zSafe) << "\n";
+        out << "; Spindle tool diameter: " << mc.spindle_tool_diameter << " mm\n";
+        out << "; Spindle feed: " << spindleFeed << " mm/min\n";
+        ensureSpindleOn();
+        out << "G0 " << fmtZ(zSpindleSafe) << "\n";
 
         // Multi-pass from material top down to Z=0 (bed)
         double stepDown = std::abs(mc.cutout_z_step);
@@ -240,26 +282,27 @@ std::string generateGCode(
             // Rapid to start position
             out << "G0 " << fmtXY(cutoutPath[0].x, cutoutPath[0].y, xOffset, yOffset) << "\n";
             // Plunge to current pass depth
-            out << "G1 " << fmtZ(currentZ) << " " << fmtF(job.engraver_feedrate / 2.0) << "\n";
+            out << "G1 " << fmtZ(currentZ) << " " << fmtF(spindleFeed) << "\n";
 
             // Cut along outline
             for (size_t i = 1; i < cutoutPath.size(); i++) {
                 out << "G1 " << fmtXY(cutoutPath[i].x, cutoutPath[i].y, xOffset, yOffset) << " "
-                    << fmtF(job.engraver_feedrate) << "\n";
+                        << fmtF(spindleFeed) << "\n";
             }
             // Close the loop
             out << "G1 " << fmtXY(cutoutPath[0].x, cutoutPath[0].y, xOffset, yOffset) << " "
-                << fmtF(job.engraver_feedrate) << "\n";
+                << fmtF(spindleFeed) << "\n";
             // Retract
-            out << "G0 " << fmtZ(zSafe) << "\n";
+            out << "G0 " << fmtZ(zSpindleSafe) << "\n";
         }
 
         out << "\n";
     }
 
-    out << "G0 " << fmtZ(zSafe) << " ; safe Z\n";
+    out << "G0 " << fmtZ(zProgramSafe) << " ; safe Z\n";
     out << "G0 X0 Y0 ; return home\n";
-    out << "M84 ; motors off\n";
+    out << "M5 ; spindle off\n";
+    out << (isFluidNC ? "M2 ; program end\n" : "M30 ; program end\n");
 
     return out.str();
 }
@@ -275,6 +318,9 @@ double estimateJobTime(
     auto& mc  = config.machine;
     auto& job = config.job;
     double total = 0.0;
+    double engFeed = job.engraver_feedrate > 0 ? job.engraver_feedrate : 300.0;
+    double engPlungeFeed = job.engraver_plunge_feedrate > 0 ? job.engraver_plunge_feedrate : 100.0;
+    double spindleFeed = job.spindle_feedrate > 0 ? job.spindle_feedrate : 60.0;
 
     // Z coordinate model: Z=0 is bed, material top at Z=materialThickness
     double mat     = mc.materialThickness;
@@ -285,7 +331,6 @@ double estimateJobTime(
     double zDrill  = std::max(0.0, mat - std::abs(mc.spindle_z_drill));
 
     double prevX = 0, prevY = 0;
-    double engFeed = job.engraver_feedrate > 0 ? job.engraver_feedrate : 300.0;
 
     for (auto& contour : contours) {
         if (contour.points.empty()) continue;
@@ -294,7 +339,7 @@ double estimateJobTime(
         total += std::hypot(sx - prevX, sy - prevY) / (mc.move_feedrate / 60.0);
         // Plunge + retract
         double zDelta = std::abs(zSafe - zCut);
-        total += 2.0 * zDelta / (engFeed / 2.0 / 60.0);
+        total += 2.0 * zDelta / (engPlungeFeed / 60.0);
 
         // Cut path
         double cutLen = 0.0;
@@ -314,8 +359,8 @@ double estimateJobTime(
         for (auto& h : holes) {
             total += std::hypot(h.x - prevX, h.y - prevY) / (mc.move_feedrate / 60.0);
             total += std::abs(zDrillHome - zDrillPre) / (mc.move_feedrate / 60.0);
-            total += std::abs(zDrillPre - zDrill) / (job.spindle_feedrate / 60.0);
-            total += std::abs(zDrillPre - zDrill) / (job.spindle_feedrate / 60.0);
+            total += std::abs(zDrillPre - zDrill) / (spindleFeed / 60.0);
+            total += std::abs(zDrillPre - zDrill) / (spindleFeed / 60.0);
             total += std::abs(zDrillHome - zDrillPre) / (mc.move_feedrate / 60.0);
             prevX = h.x; prevY = h.y;
         }
@@ -342,8 +387,8 @@ double estimateJobTime(
             nPasses++;
         }
         double zDeltaCut = std::abs(zSafe);
-        total += nPasses * (perim / (engFeed / 60.0));                   // cutting
-        total += nPasses * 2.0 * zDeltaCut / (engFeed / 2.0 / 60.0);    // plunge/retract
+        total += nPasses * (perim / (spindleFeed / 60.0));                // cutting
+        total += nPasses * 2.0 * zDeltaCut / (spindleFeed / 60.0);       // plunge/retract
     }
 
     return total;

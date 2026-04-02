@@ -4,7 +4,7 @@
 
 ## Project Description
 
-Native Windows desktop application (C++) for converting KiCad Gerber (RS-274X) and Excellon drill files to G-Code for CNC PCB isolation routing and drilling. Parses multi-layer Gerber files, renders a real-time GDI preview with pan/zoom, generates Clipper2-based contour-parallel isolation toolpaths, optimizes path ordering with nearest-neighbor + 2-opt TSP, and exports GRBL-compatible G-Code. Built with JQB_WindowsLib.
+Native Windows desktop application (C++) for converting KiCad Gerber (RS-274X) and Excellon drill files to G-Code for CNC PCB isolation routing and drilling. Parses multi-layer Gerber files, renders a real-time GDI preview with pan/zoom, generates Clipper2-based contour-parallel isolation toolpaths, optimizes path ordering with nearest-neighbor + 2-opt TSP, and exports Mach3/FluidNC-compatible G-Code. Built with JQB_WindowsLib.
 
 ## Architecture
 
@@ -45,15 +45,15 @@ gerber2gcode/
 | Module | Responsibility |
 |--------|---------------|
 | **main.cpp** | `init()` (COM init), `setup()` (window + menu + UI + canvas), `loop()` (empty — event-driven). Minimal, delegates everything. |
-| **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates + `doRecomputeClearance()` for copper sub-layer visibility changes. Layer panel: `rebuildLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
-| **AppUI** | `createUI(SimpleWindow*)` — 3-row toolbar (Open KiCad / Export / Tool dropdown / parameter fields / Generate / checkboxes), canvas, layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Isolation-affecting fields (Tip, Overlap, Offset) have `onTextChange` callbacks that trigger debounced auto-refresh. Position fields (X/Y offset) and checkboxes (Flip, No Vias) trigger full reparse. Browse KiCad button immediately loads and previews the selected directory. |
+| **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). `applyActiveToolPreset()` auto-applies tool kind workflow: generation mode mapping (Isolation / Combo / Drill / Cutout), CAM defaults (overlap/offset), XY/flip/via reset, and redraw/reparse scheduling. Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates + `doRecomputeClearance()` for copper sub-layer visibility changes. Layer panel: `rebuildLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
+| **AppUI** | `createUI(SimpleWindow*)` — polished 3-row toolbar with section headers (Project / Machining / Position), styled action buttons, themed numeric fields, canvas, wider layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Auto-managed machining controls (feeds/depths/overlap/offset/drill/XY/Flip/No Vias/Debug) are read-only or disabled; workflow expects selecting a tool preset and editing mainly `Mat` (material thickness). Browse KiCad button immediately loads and previews the selected directory. |
 | **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom) with per-component sub-layers (traces/pads/regions in distinct color shades), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` with `CopperSubVis` / `CopperSubPresence` structs. `DrillFilter` groups holes by diameter for per-diameter visibility. `zoomToFit()`. Back-to-front rendering order. |
 | **Config** | `Config` struct with `MachineConfig` (engraver Z, tip width, drill Z, feedrates, offsets), `CamConfig` (overlap, offset), `JobConfig` (engraver/spindle/laser feedrates). `loadConfig()` — minimal JSON parser. |
 | **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Two output modes: `parseGerber()` → `geo::Paths` (flat union), `parseGerberComponents()` → `GerberComponents` (categorized: traces=D01, pads=D03, regions=G36/G37). `PadGroup` struct groups D03 flashes by aperture D-code with human-readable names (e.g. "Circle Ø0.800mm", "Rect 1.27×0.64mm"). `GerberComponents::combined()` unions all categories. `GerberComponents::visiblePads()` unions only visible pad groups. |
 | **DrillParser** | Excellon parser: tool table (`TnnCdia`), coordinates, METRIC/INCH units, rout mode (M15/M16), slotted holes (G85 — skipped), via filtering. Outputs `std::vector<DrillHole>`. |
 | **Geometry** | `geo::` namespace — Clipper2 type aliases (`Point`, `Path`, `Paths`). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
 | **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. |
-| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — GRBL-compatible G0/G1 output with isolation + drilling + cutout sections. Multi-pass depth cutting for cutout. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
+| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — Mach3/FluidNC-compatible G0/G1 output with isolation + drilling + cutout sections. Multi-pass depth cutting for cutout. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
 | **Pipeline** | `detectKicadFiles(dir)` — auto-detect layers by filename suffix. `runPipeline(params, log, result)` — full workflow (parse → normalize → clip → isolate → order → generate → export). `parsePipelineData(params, log)` — parse-only for live preview. |
 | **DebugImage** | `generateDebugBMP(gcodePath, outputPath, config, holes)` — re-parses G-Code, renders as 24-bit BMP for visual validation. |
 
@@ -89,7 +89,7 @@ gerber2gcode/
 
 ### Dark Theme
 
-Window background: RGB(45, 45, 54). Canvas background: RGB(22, 22, 28). Button styles defined in `AppUI.cpp`: green for actions (`CLR_ACTION_BG`), orange for export (`CLR_EXPORT_BG`), blue for tool dropdown (`CLR_TOOL_BG`).
+Window background: RGB(34, 37, 46). Canvas background: RGB(18, 22, 31). Button styles defined in `AppUI.cpp`: green for actions (`CLR_ACTION_BG`), amber for primary generate (`CLR_EXPORT_BG`), blue for tool dropdown (`CLR_TOOL_BG`). Numeric `InputField` controls and layer `LISTBOX` are themed through `WM_CTLCOLOREDIT` / `WM_CTLCOLORLISTBOX` for high-contrast dark readability.
 
 ### Background Thread Pattern
 
@@ -103,6 +103,7 @@ The GUI automatically updates the canvas preview when parameters change, using a
 - **Position params** (X/Y offset) and **checkboxes** (Flip, No Vias) — trigger `scheduleAutoRefresh(true)` → full re-parse via `doLoadKicadDir()`
 - **Browse KiCad button** — immediately calls `doLoadKicadDir()` after path selection
 - **Tool preset selection** — `applyActiveToolPreset()` sets fields → field callbacks trigger debounced isolation refresh
+- **Tool preset selection** — `applyActiveToolPreset()` sets all core machining fields and auto-selects generation mode by `ToolPresetKind`: `Isolation` (isolation only), `Combo` (isolation + drills), `Drill` (drills only), `Cutout` (cutout only). It also applies overlap/offset defaults and resets X/Y/Flip/No Vias.
 - **Startup** — if a saved KiCad directory exists in settings, `doLoadKicadDir()` is called automatically
 
 `doLoadKicadDir()` calls `parsePipelineData()` (lightweight parse-only pipeline) then `generateToolpath()` for isolation preview. `doRefreshIsolation()` only regenerates isolation contours from cached `g_pipelineData.clearance`.
@@ -176,12 +177,21 @@ Z=0 is the **machine bed** (table surface). The PCB laminate sits on the bed:
 
 All user-entered depth values are **positive** (e.g., engravingDepth=0.05, drillDepth=2.0). The engine computes actual Z from `materialThickness`.
 
-### Output Format (GRBL-compatible)
+### Output Format (Mach3/FluidNC-compatible)
 
 ```gcode
 ; gerber2gcode — CNC PCB isolation engraving
 G21 ; mm
 G90 ; absolute
+G17 ; XY plane
+G94 ; feed per minute
+G54 ; work offset
+G40 ; cancel cutter compensation
+G49 ; cancel tool length offset
+G80 ; cancel canned cycles
+M5 ; spindle off
+; post profile: Mach3
+G0 Z6.5000 ; initial safe Z
 
 ; === Engraver: isolation milling ===
 G0 Z6.5000
@@ -191,6 +201,8 @@ G1 X15.000 Y20.000 F300  ; cut
 G0 Z6.5000               ; retract
 
 ; === Drilling ===
+M3 S255 ; spindle on
+G4 P1.0 ; spindle settle
 G0 X5.000 Y10.000
 G1 Z2.5000 F2400         ; approach (pre-drill Z)
 G1 Z0.0000 F50           ; drill plunge (through material to bed)
@@ -199,7 +211,15 @@ G0 Z6.5000               ; safe height
 
 G0 Z6.5000
 G0 X0 Y0
-M84 ; motors off
+M5 ; spindle off
+M30 ; program end
+```
+
+When FluidNC post profile is selected, output footer uses `M2`:
+
+```gcode
+M5 ; spindle off
+M2 ; program end
 ```
 
 When cutout is enabled, an additional section is appended after drilling:
@@ -214,7 +234,7 @@ G1 X50.000 Y40.000 F300
 G0 Z6.5000                ; retract after final pass
 ```
 
-Cutout uses multi-pass depth: starts at Z=materialThickness, descends by `cutout_z_step` each pass until reaching Z=0 (bed level). The cutout path is the board outline offset outward by `tool_radius + cutout_offset`.
+Cutout uses multi-pass depth: starts at Z=materialThickness, descends by `cutout_z_step` each pass until reaching Z=0 (bed level). The cutout path is the board outline offset outward by `spindle_tool_radius + cutout_offset`.
 
 ### Drill Optimization
 
@@ -289,11 +309,12 @@ Steps 1–7 only — returns `PipelineResult` with parsed geometry for immediate
 | `material` | Material thickness (mm); Z=0 at bed, top at Z=material | `1.50` |
 | `x_offset` / `y_offset` | Board placement offset (mm) | `0.00` |
 | `z_drill` | Drill depth from top (mm, positive; clamped to Z>=0) | `2.00` |
-| `drill_dia` | Drill tool diameter (mm) | `0.80` |
-| `drill_feed` | Drill plunge feed rate (mm/min) | `50` |
+| `drill_dia` | Spindle tool diameter for drilling and cutout (mm) | `0.80` |
+| `drill_feed` | Spindle feed rate for drilling and cutout (mm/min) | `50` |
 | `flip` | Mirror board for bottom layer | `0` |
 | `ignore_via` | Skip via drill holes | `0` |
 | `debug_image` | Generate debug BMP | `0` |
+| `post_profile` | Postprocessor profile (`mach3` or `fluidnc`) | `mach3` |
 | `gen_isolation` | Generate isolation G-Code | `1` |
 | `gen_drilling` | Generate drilling G-Code | `1` |
 | `gen_cutout` | Generate cutout G-Code | `0` |
@@ -310,41 +331,51 @@ Steps 1–7 only — returns `PipelineResult` with parsed geometry for immediate
 | `tool_N_feedXY` | XY feed rate (mm/min) |
 | `tool_N_feedZ` | Z plunge feed rate (mm/min) |
 | `tool_N_zDrill` | Drill depth from top (mm, positive) |
+| `tool_N_kind` | Preset group (`isolation`, `combo`, `drill`, `cutout`) |
+| `tool_N_drillDiameter` | Spindle diameter for drilling/cutout (mm) |
 | `tool_N_drillFeed` | Drill feed rate (mm/min) |
+| `tool_N_overlap` | Isolation overlap ratio |
+| `tool_N_offset` | Isolation safety offset (mm) |
+| `tool_N_xOffset` / `tool_N_yOffset` | Placement offsets (mm) |
+| `tool_N_flip` | Mirror board for bottom workflow (0/1) |
+| `tool_N_ignoreVia` | Skip via holes (0/1) |
+| `tool_N_debugImage` | Generate debug BMP (0/1) |
 | `active_tool` | Active preset index |
 
 ### Default Tool Presets (28)
 
-| Name | Diameter | Cut Depth | Safe H | Feed XY | Feed Z | Z Drill | Drill Feed |
-|------|----------|-----------|--------|---------|--------|---------|------------|
-| V-bit 10deg 0.05mm | 0.05 | 0.03 | 5.0 | 150 | 30 | 2.0 | 60 |
-| V-bit 20deg 0.10mm | 0.10 | 0.05 | 5.0 | 200 | 50 | 2.0 | 60 |
-| V-bit 30deg 0.08mm (0.003in) | 0.08 | 0.05 | 5.0 | 220 | 50 | 2.0 | 60 |
-| V-bit 30deg 0.10mm | 0.10 | 0.06 | 5.0 | 250 | 60 | 2.0 | 60 |
-| V-bit 30deg 0.13mm (0.005in) | 0.13 | 0.08 | 5.0 | 280 | 70 | 2.0 | 60 |
-| V-bit 30deg 0.20mm | 0.20 | 0.10 | 5.0 | 300 | 80 | 2.0 | 60 |
-| V-bit 45deg 0.20mm | 0.20 | 0.10 | 5.0 | 350 | 80 | 2.0 | 60 |
-| V-bit 60deg 0.30mm | 0.30 | 0.15 | 5.0 | 350 | 100 | 2.0 | 60 |
-| End mill 0.40mm (1/64in) | 0.40 | 0.10 | 5.0 | 220 | 60 | 2.0 | 60 |
-| End mill 0.60mm | 0.60 | 0.12 | 5.0 | 280 | 70 | 2.0 | 60 |
-| End mill 0.80mm (1/32in) | 0.80 | 0.15 | 5.0 | 400 | 100 | 2.0 | 60 |
-| End mill 1.00mm | 1.00 | 0.20 | 5.0 | 420 | 100 | 2.0 | 60 |
-| End mill 1.20mm | 1.20 | 0.25 | 5.0 | 450 | 110 | 2.0 | 60 |
-| Cutout mill 1.60mm (1/16in) | 1.60 | 0.35 | 5.0 | 500 | 120 | 2.0 | 60 |
-| End mill 2.00mm | 2.00 | 0.40 | 5.0 | 550 | 120 | 2.0 | 60 |
-| End mill 3.20mm (1/8in) | 3.20 | 0.60 | 5.0 | 700 | 180 | 2.0 | 60 |
-| Drill 0.30mm | 0.30 | 2.00 | 5.0 | 180 | 30 | 2.0 | 30 |
-| Drill 0.40mm | 0.40 | 2.00 | 5.0 | 200 | 35 | 2.0 | 35 |
-| Drill 0.50mm | 0.50 | 2.00 | 5.0 | 240 | 40 | 2.0 | 40 |
-| Drill 0.60mm | 0.60 | 2.00 | 5.0 | 260 | 45 | 2.0 | 45 |
-| Drill 0.80mm | 0.80 | 2.00 | 5.0 | 300 | 50 | 2.0 | 50 |
-| Drill 0.90mm | 0.90 | 2.00 | 5.0 | 300 | 50 | 2.0 | 50 |
-| Drill 1.00mm | 1.00 | 2.00 | 5.0 | 320 | 55 | 2.0 | 55 |
-| Drill 1.20mm | 1.20 | 2.00 | 5.0 | 320 | 55 | 2.0 | 60 |
-| Drill 1.50mm | 1.50 | 2.00 | 5.0 | 340 | 60 | 2.0 | 65 |
-| Drill 2.00mm | 2.00 | 2.00 | 5.0 | 360 | 60 | 2.0 | 80 |
-| Drill 3.00mm | 3.00 | 2.00 | 5.0 | 360 | 60 | 2.0 | 80 |
-| Drill 3.20mm | 3.20 | 2.00 | 5.0 | 360 | 60 | 2.0 | 80 |
+Defaults are tuned as conservative starting points for Mach3 + FluidNC.
+
+| Name | Diameter | Cut Depth | Safe H | Feed XY | Feed Z | Z Drill | Spindle Dia | Drill Feed |
+|------|----------|-----------|--------|---------|--------|---------|-------------|------------|
+| V-bit 10deg 0.05mm | 0.05 | 0.03 | 5.0 | 120 | 20 | 2.0 | 0.80 | 50 |
+| V-bit 20deg 0.10mm | 0.10 | 0.05 | 5.0 | 160 | 25 | 2.0 | 0.80 | 60 |
+| V-bit 30deg 0.08mm (0.003in) | 0.08 | 0.05 | 5.0 | 140 | 22 | 2.0 | 0.80 | 60 |
+| V-bit 30deg 0.10mm | 0.10 | 0.06 | 5.0 | 180 | 28 | 2.0 | 0.80 | 60 |
+| V-bit 30deg 0.13mm (0.005in) | 0.13 | 0.08 | 5.0 | 220 | 35 | 2.0 | 0.80 | 70 |
+| V-bit 30deg 0.20mm | 0.20 | 0.10 | 5.0 | 260 | 45 | 2.0 | 0.80 | 80 |
+| V-bit 45deg 0.20mm | 0.20 | 0.10 | 5.0 | 300 | 55 | 2.0 | 0.80 | 90 |
+| V-bit 60deg 0.30mm | 0.30 | 0.15 | 5.0 | 340 | 65 | 2.0 | 0.80 | 100 |
+| End mill 0.40mm (1/64in) | 0.40 | 0.10 | 5.0 | 180 | 35 | 2.0 | 0.40 | 90 |
+| End mill 0.60mm | 0.60 | 0.12 | 5.0 | 220 | 45 | 2.0 | 0.60 | 110 |
+| End mill 0.80mm (1/32in) | 0.80 | 0.15 | 5.0 | 260 | 55 | 2.0 | 0.80 | 130 |
+| End mill 1.00mm | 1.00 | 0.20 | 5.0 | 300 | 65 | 2.0 | 1.00 | 150 |
+| End mill 1.20mm | 1.20 | 0.25 | 5.0 | 340 | 75 | 2.0 | 1.20 | 170 |
+| Cutout mill 1.60mm (1/16in) | 1.60 | 0.35 | 5.0 | 420 | 90 | 2.0 | 1.60 | 220 |
+| End mill 2.00mm | 2.00 | 0.40 | 5.0 | 480 | 100 | 2.0 | 2.00 | 260 |
+| End mill 3.20mm (1/8in) | 3.20 | 0.60 | 5.0 | 650 | 140 | 2.0 | 3.20 | 320 |
+| Drill 0.30mm | 0.30 | 2.00 | 5.0 | 160 | 20 | 2.0 | 0.30 | 25 |
+| Drill 0.40mm | 0.40 | 2.00 | 5.0 | 180 | 25 | 2.0 | 0.40 | 30 |
+| Drill 0.50mm | 0.50 | 2.00 | 5.0 | 200 | 30 | 2.0 | 0.50 | 35 |
+| Drill 0.60mm | 0.60 | 2.00 | 5.0 | 220 | 35 | 2.0 | 0.60 | 40 |
+| Drill 0.80mm | 0.80 | 2.00 | 5.0 | 240 | 40 | 2.0 | 0.80 | 50 |
+| Drill 0.90mm | 0.90 | 2.00 | 5.0 | 260 | 45 | 2.0 | 0.90 | 55 |
+| Drill 1.00mm | 1.00 | 2.00 | 5.0 | 280 | 50 | 2.0 | 1.00 | 60 |
+| Drill 1.20mm | 1.20 | 2.00 | 5.0 | 300 | 55 | 2.0 | 1.20 | 70 |
+| Drill 1.50mm | 1.50 | 2.00 | 5.0 | 320 | 60 | 2.0 | 1.50 | 85 |
+| Drill 2.00mm | 2.00 | 2.00 | 5.0 | 360 | 70 | 2.0 | 2.00 | 100 |
+| Drill 3.00mm | 3.00 | 2.00 | 5.0 | 420 | 90 | 2.0 | 3.00 | 120 |
+| Drill 3.20mm | 3.20 | 2.00 | 5.0 | 450 | 95 | 2.0 | 3.20 | 130 |
 
 ---
 
@@ -420,7 +451,7 @@ Add new format support in `DrillParser.cpp`. Output: `std::vector<DrillHole>`.
 
 ### Extending G-Code Output
 
-Add methods to `GCodeGen`. Keep GRBL-compatible format (G0/G1 only, no arcs). Use `fmtXY()`, `fmtZ()`, `fmtF()` helpers for consistent formatting.
+Add methods to `GCodeGen`. Keep Mach3/FluidNC-compatible format (G0/G1 only, no arcs). Use `fmtXY()`, `fmtZ()`, `fmtF()` helpers for consistent formatting.
 
 ### Adding New Pipeline Stages
 
@@ -428,7 +459,7 @@ Add logic in `Pipeline.cpp` — both `runPipeline()` (full) and `parsePipelineDa
 
 ### Canvas Resize
 
-`installResizeHandler()` uses `SetWindowSubclass()` on the main window to intercept `WM_SIZE`. `doResize()` repositions canvas, layer panel, and log area. Layout constants: `TOOLBAR_HEIGHT = 100`, `LAYER_PANEL_W = 180`, `STATUS_BAR_H = 24`, `LOG_AREA_H = 120`.
+`installResizeHandler()` uses `SetWindowSubclass()` on the main window to intercept `WM_SIZE` plus color-theme messages (`WM_CTLCOLOREDIT`, `WM_CTLCOLORLISTBOX`). `doResize()` repositions canvas, layer panel, and log area. Layout constants: `TOOLBAR_HEIGHT = 128`, `LAYER_PANEL_W = 240`, `STATUS_BAR_H = 20`, `LOG_AREA_H = 128`.
 
 ### Layer Panel
 

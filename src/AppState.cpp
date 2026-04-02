@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
+#include <cctype>
 #include <algorithm>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -54,6 +55,7 @@ InputField*    g_fldDrillFeed  = nullptr;
 CheckBox*      g_chkFlip       = nullptr;
 CheckBox*      g_chkIgnoreVia  = nullptr;
 CheckBox*      g_chkDebug      = nullptr;
+CheckBox*      g_chkFluidNC    = nullptr;
 
 Button*        g_btnTool       = nullptr;
 Button*        g_btnGenerate   = nullptr;
@@ -98,6 +100,130 @@ static double parseD(const std::string& s) {
     return std::strtod(tmp.c_str(), nullptr);
 }
 
+static std::string lowerAscii(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+        [](unsigned char ch) { return (char)std::tolower(ch); });
+    return s;
+}
+
+static double defaultSpindleDiameterForPreset(const std::string& name, double toolDiameter) {
+    std::string low = lowerAscii(name);
+    if (low.find("drill") != std::string::npos) return toolDiameter;
+    if (low.find("end mill") != std::string::npos) return toolDiameter;
+    if (low.find("cutout") != std::string::npos) return toolDiameter;
+    return 0.8;
+}
+
+static ToolPresetKind inferPresetKindFromName(const std::string& name) {
+    std::string low = lowerAscii(name);
+    if (low.find("drill") != std::string::npos) return ToolPresetKind::Drill;
+    if (low.find("cutout") != std::string::npos) return ToolPresetKind::Cutout;
+    if (low.find("v-bit") != std::string::npos || low.find("engrav") != std::string::npos)
+        return ToolPresetKind::Isolation;
+    if (low.find("end mill") != std::string::npos) return ToolPresetKind::Combo;
+    return ToolPresetKind::Isolation;
+}
+
+static std::string presetKindToKey(ToolPresetKind kind) {
+    switch (kind) {
+        case ToolPresetKind::Isolation: return "isolation";
+        case ToolPresetKind::Combo:     return "combo";
+        case ToolPresetKind::Drill:     return "drill";
+        case ToolPresetKind::Cutout:    return "cutout";
+    }
+    return "isolation";
+}
+
+static ToolPresetKind presetKindFromKey(const std::string& key) {
+    std::string low = lowerAscii(key);
+    if (low == "combo")  return ToolPresetKind::Combo;
+    if (low == "drill")  return ToolPresetKind::Drill;
+    if (low == "cutout") return ToolPresetKind::Cutout;
+    return ToolPresetKind::Isolation;
+}
+
+static std::wstring presetKindTag(ToolPresetKind kind) {
+    switch (kind) {
+        case ToolPresetKind::Isolation: return L"ISO";
+        case ToolPresetKind::Combo:     return L"COMBO";
+        case ToolPresetKind::Drill:     return L"DRILL";
+        case ToolPresetKind::Cutout:    return L"CUTOUT";
+    }
+    return L"ISO";
+}
+
+static std::wstring presetKindHeader(ToolPresetKind kind) {
+    switch (kind) {
+        case ToolPresetKind::Isolation: return L"Isolation";
+        case ToolPresetKind::Combo:     return L"Combo (Isolation + Drill)";
+        case ToolPresetKind::Drill:     return L"Drilling";
+        case ToolPresetKind::Cutout:    return L"Cutout";
+    }
+    return L"Isolation";
+}
+
+static double defaultOverlapForKind(ToolPresetKind kind) {
+    switch (kind) {
+        case ToolPresetKind::Isolation: return 0.40;
+        case ToolPresetKind::Combo:     return 0.30;
+        case ToolPresetKind::Drill:
+        case ToolPresetKind::Cutout:    return 0.00;
+    }
+    return 0.40;
+}
+
+static double defaultOffsetForKind(ToolPresetKind kind) {
+    switch (kind) {
+        case ToolPresetKind::Isolation:
+        case ToolPresetKind::Combo:     return 0.02;
+        case ToolPresetKind::Drill:
+        case ToolPresetKind::Cutout:    return 0.00;
+    }
+    return 0.02;
+}
+
+static void applyPresetJobMode(ToolPresetKind kind) {
+    if (!g_canvas) return;
+    auto& lay = g_canvas->layers();
+
+    switch (kind) {
+        case ToolPresetKind::Isolation:
+            lay.isolation = true;
+            lay.drillsPTH = false;
+            lay.drillsNPTH = false;
+            lay.cutout = false;
+            break;
+        case ToolPresetKind::Combo:
+            lay.isolation = true;
+            lay.drillsPTH = true;
+            lay.drillsNPTH = true;
+            lay.cutout = false;
+            break;
+        case ToolPresetKind::Drill:
+            lay.isolation = false;
+            lay.drillsPTH = true;
+            lay.drillsNPTH = true;
+            lay.cutout = false;
+            break;
+        case ToolPresetKind::Cutout:
+            lay.isolation = false;
+            lay.drillsPTH = false;
+            lay.drillsNPTH = false;
+            lay.cutout = true;
+            break;
+    }
+}
+
+static void applyPresetManagedValues(const ToolPreset& tp) {
+    if (g_fldOverlap)   g_fldOverlap->setText(dblStr(tp.overlap, 2).c_str());
+    if (g_fldOffset)    g_fldOffset->setText(dblStr(tp.offset, 2).c_str());
+    if (g_fldXOffset)   g_fldXOffset->setText(dblStr(tp.xOffset, 2).c_str());
+    if (g_fldYOffset)   g_fldYOffset->setText(dblStr(tp.yOffset, 2).c_str());
+    if (g_chkFlip)      g_chkFlip->setChecked(tp.flip);
+    if (g_chkIgnoreVia) g_chkIgnoreVia->setChecked(tp.ignoreVia);
+    if (g_chkDebug)     g_chkDebug->setChecked(tp.debugImage);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Logging
 // ════════════════════════════════════════════════════════════════════════════
@@ -140,6 +266,7 @@ void loadSettings() {
     if (g_chkFlip)       g_chkFlip->setChecked(s.getValue("flip", "0") == "1");
     if (g_chkIgnoreVia)  g_chkIgnoreVia->setChecked(s.getValue("ignore_via", "0") == "1");
     if (g_chkDebug)      g_chkDebug->setChecked(s.getValue("debug_image", "1") == "1");
+    if (g_chkFluidNC)    g_chkFluidNC->setChecked(s.getValue("post_profile", "mach3") == "fluidnc");
 
     // Load layer visibility from settings
     if (g_canvas) {
@@ -177,6 +304,7 @@ void saveSettings() {
     if (g_chkFlip)       s.setValue("flip",          g_chkFlip->isChecked() ? "1" : "0");
     if (g_chkIgnoreVia)  s.setValue("ignore_via",    g_chkIgnoreVia->isChecked() ? "1" : "0");
     if (g_chkDebug)      s.setValue("debug_image",   g_chkDebug->isChecked() ? "1" : "0");
+    if (g_chkFluidNC)    s.setValue("post_profile",  g_chkFluidNC->isChecked() ? "fluidnc" : "mach3");
 
     // Save layer visibility from canvas
     if (g_canvas) {
@@ -195,38 +323,68 @@ void saveSettings() {
 
 void createDefaultToolPresets() {
     g_toolPresets.clear();
-    //                                    name                     dia   depth  safe  fXY    fZ    drill  dFeed
-    // V-bit engravers (isolation routing)
-    g_toolPresets.push_back({"V-bit 10deg 0.05mm",           0.05, 0.03, 5.0, 150.0, 30.0, 2.0, 60.0});
-    g_toolPresets.push_back({"V-bit 20deg 0.10mm",           0.10, 0.05, 5.0, 200.0, 50.0, 2.0, 60.0});
-    g_toolPresets.push_back({"V-bit 30deg 0.08mm (0.003in)", 0.08, 0.05, 5.0, 220.0, 50.0, 2.0, 60.0});
-    g_toolPresets.push_back({"V-bit 30deg 0.10mm",           0.10, 0.06, 5.0, 250.0, 60.0, 2.0, 60.0});
-    g_toolPresets.push_back({"V-bit 30deg 0.13mm (0.005in)", 0.13, 0.08, 5.0, 280.0, 70.0, 2.0, 60.0});
-    g_toolPresets.push_back({"V-bit 30deg 0.20mm",           0.20, 0.10, 5.0, 300.0, 80.0, 2.0, 60.0});
-    g_toolPresets.push_back({"V-bit 45deg 0.20mm",           0.20, 0.10, 5.0, 350.0, 80.0, 2.0, 60.0});
-    g_toolPresets.push_back({"V-bit 60deg 0.30mm",           0.30, 0.15, 5.0, 350.0, 100.0, 2.0, 60.0});
-    // End mills (wider isolation / cutout)
-    g_toolPresets.push_back({"End mill 0.40mm (1/64in)",    0.40, 0.10, 5.0, 220.0, 60.0, 2.0, 60.0});
-    g_toolPresets.push_back({"End mill 0.60mm",             0.60, 0.12, 5.0, 280.0, 70.0, 2.0, 60.0});
-    g_toolPresets.push_back({"End mill 0.80mm (1/32in)",    0.80, 0.15, 5.0, 400.0, 100.0, 2.0, 60.0});
-    g_toolPresets.push_back({"End mill 1.00mm",             1.00, 0.20, 5.0, 420.0, 100.0, 2.0, 60.0});
-    g_toolPresets.push_back({"End mill 1.20mm",             1.20, 0.25, 5.0, 450.0, 110.0, 2.0, 60.0});
-    g_toolPresets.push_back({"Cutout mill 1.60mm (1/16in)", 1.60, 0.35, 5.0, 500.0, 120.0, 2.0, 60.0});
-    g_toolPresets.push_back({"End mill 2.00mm",             2.00, 0.40, 5.0, 550.0, 120.0, 2.0, 60.0});
-    g_toolPresets.push_back({"End mill 3.20mm (1/8in)",     3.20, 0.60, 5.0, 700.0, 180.0, 2.0, 60.0});
+    auto add = [&](ToolPresetKind kind, const char* name,
+                   double dia, double depth, double safe,
+                   double fxy, double fz,
+                   double zDrill, double spDia, double dFeed) {
+        ToolPreset tp;
+        tp.name = name;
+        tp.toolDiameter = dia;
+        tp.cutDepth = depth;
+        tp.safeHeight = safe;
+        tp.feedRateXY = fxy;
+        tp.feedRateZ = fz;
+        tp.zDrill = zDrill;
+        tp.drillDiameter = spDia;
+        tp.drillFeed = dFeed;
+        tp.overlap = defaultOverlapForKind(kind);
+        tp.offset = defaultOffsetForKind(kind);
+        tp.xOffset = 0.0;
+        tp.yOffset = 0.0;
+        tp.flip = false;
+        tp.ignoreVia = false;
+        tp.debugImage = true;
+        tp.kind = kind;
+        g_toolPresets.push_back(tp);
+    };
+
+    // Mach3 + FluidNC conservative defaults
+    // Isolation V-bits
+    add(ToolPresetKind::Isolation, "V-bit 10deg 0.05mm",           0.05, 0.03, 5.0, 120.0, 20.0, 2.0, 0.8, 50.0);
+    add(ToolPresetKind::Isolation, "V-bit 20deg 0.10mm",           0.10, 0.05, 5.0, 160.0, 25.0, 2.0, 0.8, 60.0);
+    add(ToolPresetKind::Isolation, "V-bit 30deg 0.08mm (0.003in)", 0.08, 0.05, 5.0, 140.0, 22.0, 2.0, 0.8, 60.0);
+    add(ToolPresetKind::Isolation, "V-bit 30deg 0.10mm",           0.10, 0.06, 5.0, 180.0, 28.0, 2.0, 0.8, 60.0);
+    add(ToolPresetKind::Isolation, "V-bit 30deg 0.13mm (0.005in)", 0.13, 0.08, 5.0, 220.0, 35.0, 2.0, 0.8, 70.0);
+    add(ToolPresetKind::Isolation, "V-bit 30deg 0.20mm",           0.20, 0.10, 5.0, 260.0, 45.0, 2.0, 0.8, 80.0);
+    add(ToolPresetKind::Isolation, "V-bit 45deg 0.20mm",           0.20, 0.10, 5.0, 300.0, 55.0, 2.0, 0.8, 90.0);
+    add(ToolPresetKind::Isolation, "V-bit 60deg 0.30mm",           0.30, 0.15, 5.0, 340.0, 65.0, 2.0, 0.8, 100.0);
+
+    // Combo (isolation + drilling with end mills)
+    add(ToolPresetKind::Combo, "End mill 0.40mm (1/64in)",    0.40, 0.10, 5.0, 180.0, 35.0, 2.0, 0.4, 90.0);
+    add(ToolPresetKind::Combo, "End mill 0.60mm",             0.60, 0.12, 5.0, 220.0, 45.0, 2.0, 0.6, 110.0);
+    add(ToolPresetKind::Combo, "End mill 0.80mm (1/32in)",    0.80, 0.15, 5.0, 260.0, 55.0, 2.0, 0.8, 130.0);
+    add(ToolPresetKind::Combo, "End mill 1.00mm",             1.00, 0.20, 5.0, 300.0, 65.0, 2.0, 1.0, 150.0);
+    add(ToolPresetKind::Combo, "End mill 1.20mm",             1.20, 0.25, 5.0, 340.0, 75.0, 2.0, 1.2, 170.0);
+
+    // Cutout (spindle driven)
+    add(ToolPresetKind::Cutout, "Cutout mill 1.60mm (1/16in)", 1.60, 0.35, 5.0, 420.0, 90.0, 2.0, 1.6, 220.0);
+    add(ToolPresetKind::Cutout, "End mill 2.00mm",             2.00, 0.40, 5.0, 480.0, 100.0, 2.0, 2.0, 260.0);
+    add(ToolPresetKind::Cutout, "End mill 3.20mm (1/8in)",     3.20, 0.60, 5.0, 650.0, 140.0, 2.0, 3.2, 320.0);
+
     // Drills (common PCB hole sizes)
-    g_toolPresets.push_back({"Drill 0.30mm",                  0.30, 2.00, 5.0, 180.0, 30.0, 2.0, 30.0});
-    g_toolPresets.push_back({"Drill 0.40mm",                  0.40, 2.00, 5.0, 200.0, 35.0, 2.0, 35.0});
-    g_toolPresets.push_back({"Drill 0.50mm",                  0.50, 2.00, 5.0, 240.0, 40.0, 2.0, 40.0});
-    g_toolPresets.push_back({"Drill 0.60mm",                  0.60, 2.00, 5.0, 260.0, 45.0, 2.0, 45.0});
-    g_toolPresets.push_back({"Drill 0.80mm",                  0.80, 2.00, 5.0, 300.0, 50.0, 2.0, 50.0});
-    g_toolPresets.push_back({"Drill 0.90mm",                  0.90, 2.00, 5.0, 300.0, 50.0, 2.0, 50.0});
-    g_toolPresets.push_back({"Drill 1.00mm",                  1.00, 2.00, 5.0, 320.0, 55.0, 2.0, 55.0});
-    g_toolPresets.push_back({"Drill 1.20mm",                  1.20, 2.00, 5.0, 320.0, 55.0, 2.0, 60.0});
-    g_toolPresets.push_back({"Drill 1.50mm",                  1.50, 2.00, 5.0, 340.0, 60.0, 2.0, 65.0});
-    g_toolPresets.push_back({"Drill 2.00mm",                  2.00, 2.00, 5.0, 360.0, 60.0, 2.0, 80.0});
-    g_toolPresets.push_back({"Drill 3.00mm",                  3.00, 2.00, 5.0, 360.0, 60.0, 2.0, 80.0});
-    g_toolPresets.push_back({"Drill 3.20mm",                  3.20, 2.00, 5.0, 360.0, 60.0, 2.0, 80.0});
+    add(ToolPresetKind::Drill, "Drill 0.30mm", 0.30, 2.00, 5.0, 160.0, 20.0, 2.0, 0.3, 25.0);
+    add(ToolPresetKind::Drill, "Drill 0.40mm", 0.40, 2.00, 5.0, 180.0, 25.0, 2.0, 0.4, 30.0);
+    add(ToolPresetKind::Drill, "Drill 0.50mm", 0.50, 2.00, 5.0, 200.0, 30.0, 2.0, 0.5, 35.0);
+    add(ToolPresetKind::Drill, "Drill 0.60mm", 0.60, 2.00, 5.0, 220.0, 35.0, 2.0, 0.6, 40.0);
+    add(ToolPresetKind::Drill, "Drill 0.80mm", 0.80, 2.00, 5.0, 240.0, 40.0, 2.0, 0.8, 50.0);
+    add(ToolPresetKind::Drill, "Drill 0.90mm", 0.90, 2.00, 5.0, 260.0, 45.0, 2.0, 0.9, 55.0);
+    add(ToolPresetKind::Drill, "Drill 1.00mm", 1.00, 2.00, 5.0, 280.0, 50.0, 2.0, 1.0, 60.0);
+    add(ToolPresetKind::Drill, "Drill 1.20mm", 1.20, 2.00, 5.0, 300.0, 55.0, 2.0, 1.2, 70.0);
+    add(ToolPresetKind::Drill, "Drill 1.50mm", 1.50, 2.00, 5.0, 320.0, 60.0, 2.0, 1.5, 85.0);
+    add(ToolPresetKind::Drill, "Drill 2.00mm", 2.00, 2.00, 5.0, 360.0, 70.0, 2.0, 2.0, 100.0);
+    add(ToolPresetKind::Drill, "Drill 3.00mm", 3.00, 2.00, 5.0, 420.0, 90.0, 2.0, 3.0, 120.0);
+    add(ToolPresetKind::Drill, "Drill 3.20mm", 3.20, 2.00, 5.0, 450.0, 95.0, 2.0, 3.2, 130.0);
+
     g_activeToolIndex = 0;
 }
 
@@ -243,13 +401,24 @@ void loadToolPresets() {
             std::string p = "tool_" + intStr(i) + "_";
             ToolPreset tp;
             tp.name         = tc.getValue(p + "name", "Tool " + intStr(i));
+            tp.kind         = presetKindFromKey(tc.getValue(p + "kind",
+                presetKindToKey(inferPresetKindFromName(tp.name))));
             tp.toolDiameter = parseD(tc.getValue(p + "toolDiameter", "0.2"));
             tp.cutDepth     = std::abs(parseD(tc.getValue(p + "cutDepth", "0.05")));
             tp.safeHeight   = parseD(tc.getValue(p + "safeHeight", "5.0"));
             tp.feedRateXY   = parseD(tc.getValue(p + "feedXY", "300"));
             tp.feedRateZ    = parseD(tc.getValue(p + "feedZ", "100"));
             tp.zDrill       = std::abs(parseD(tc.getValue(p + "zDrill", "2")));
+            tp.drillDiameter = parseD(tc.getValue(p + "drillDiameter",
+                dblStr(defaultSpindleDiameterForPreset(tp.name, tp.toolDiameter), 3)));
             tp.drillFeed    = parseD(tc.getValue(p + "drillFeed", "60"));
+            tp.overlap      = parseD(tc.getValue(p + "overlap", dblStr(defaultOverlapForKind(tp.kind), 2)));
+            tp.offset       = parseD(tc.getValue(p + "offset",  dblStr(defaultOffsetForKind(tp.kind), 2)));
+            tp.xOffset      = parseD(tc.getValue(p + "xOffset", "0"));
+            tp.yOffset      = parseD(tc.getValue(p + "yOffset", "0"));
+            tp.flip         = tc.getValue(p + "flip", "0") == "1";
+            tp.ignoreVia    = tc.getValue(p + "ignoreVia", "0") == "1";
+            tp.debugImage   = tc.getValue(p + "debugImage", "1") == "1";
             g_toolPresets.push_back(tp);
         }
     } else {
@@ -278,7 +447,16 @@ void saveToolPresets() {
         tc.setValue(p + "feedXY",       dblStr(tp.feedRateXY, 1));
         tc.setValue(p + "feedZ",        dblStr(tp.feedRateZ, 1));
         tc.setValue(p + "zDrill",       dblStr(tp.zDrill));
+        tc.setValue(p + "drillDiameter", dblStr(tp.drillDiameter, 3));
         tc.setValue(p + "drillFeed",    dblStr(tp.drillFeed, 1));
+        tc.setValue(p + "overlap",      dblStr(tp.overlap, 2));
+        tc.setValue(p + "offset",       dblStr(tp.offset, 2));
+        tc.setValue(p + "xOffset",      dblStr(tp.xOffset, 2));
+        tc.setValue(p + "yOffset",      dblStr(tp.yOffset, 2));
+        tc.setValue(p + "flip",         tp.flip ? "1" : "0");
+        tc.setValue(p + "ignoreVia",    tp.ignoreVia ? "1" : "0");
+        tc.setValue(p + "debugImage",   tp.debugImage ? "1" : "0");
+        tc.setValue(p + "kind",         presetKindToKey(tp.kind));
     }
     tc.setValue("active_tool", intStr(g_activeToolIndex));
 }
@@ -293,7 +471,20 @@ void applyActiveToolPreset() {
     if (g_fldFeedXY)     g_fldFeedXY->setText(dblStr(tp.feedRateXY, 1).c_str());
     if (g_fldFeedZ)      g_fldFeedZ->setText(dblStr(tp.feedRateZ, 1).c_str());
     if (g_fldZDrill)     g_fldZDrill->setText(dblStr(tp.zDrill).c_str());
+    if (g_fldDrillDia)   g_fldDrillDia->setText(dblStr(tp.drillDiameter, 3).c_str());
     if (g_fldDrillFeed)  g_fldDrillFeed->setText(dblStr(tp.drillFeed, 1).c_str());
+
+    applyPresetManagedValues(tp);
+    applyPresetJobMode(tp.kind);
+
+    if (g_canvas) {
+        rebuildLayerPanel();
+        g_canvas->redraw();
+    }
+
+    if (g_pipelineData.valid) {
+        scheduleAutoRefresh(true);
+    }
 }
 
 void doSelectTool(int index) {
@@ -308,6 +499,7 @@ void updateToolButtonText() {
     if (!g_btnTool) return;
     std::wstring text = L"\u25BC ";
     if (g_activeToolIndex >= 0 && g_activeToolIndex < (int)g_toolPresets.size()) {
+        text += L"[" + presetKindTag(g_toolPresets[g_activeToolIndex].kind) + L"] ";
         text += StringUtils::utf8ToWide(g_toolPresets[g_activeToolIndex].name);
     }
     SetWindowTextW(g_btnTool->getHandle(), text.c_str());
@@ -323,7 +515,17 @@ void showToolPopup() {
     GetWindowRect(g_btnTool->getHandle(), &rc);
 
     HMENU hMenu = CreatePopupMenu();
+    ToolPresetKind lastKind = ToolPresetKind::Isolation;
+    bool hasLastKind = false;
     for (int i = 0; i < (int)g_toolPresets.size(); i++) {
+        ToolPresetKind kind = g_toolPresets[i].kind;
+        if (!hasLastKind || kind != lastKind) {
+            if (hasLastKind) AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+            std::wstring header = L"[ " + presetKindHeader(kind) + L" ]";
+            AppendMenuW(hMenu, MF_STRING | MF_DISABLED, 0, header.c_str());
+            hasLastKind = true;
+            lastKind = kind;
+        }
         std::wstring name = StringUtils::utf8ToWide(g_toolPresets[i].name);
         UINT flags = MF_STRING;
         if (i == g_activeToolIndex) flags |= MF_CHECKED;
@@ -355,7 +557,10 @@ static HWND s_hToolSafeH = nullptr;
 static HWND s_hToolFXY   = nullptr;
 static HWND s_hToolFZ    = nullptr;
 static HWND s_hToolZDr   = nullptr;
+static HWND s_hToolDrDia = nullptr;
 static HWND s_hToolDrF   = nullptr;
+static HWND s_hToolOverlap = nullptr;
+static HWND s_hToolOffset  = nullptr;
 static int  s_toolSel    = -1;
 
 static void toolDlgPopulate(int idx) {
@@ -367,7 +572,10 @@ static void toolDlgPopulate(int idx) {
         SetWindowTextW(s_hToolFXY, L"");
         SetWindowTextW(s_hToolFZ, L"");
         SetWindowTextW(s_hToolZDr, L"");
+        SetWindowTextW(s_hToolDrDia, L"");
         SetWindowTextW(s_hToolDrF, L"");
+        SetWindowTextW(s_hToolOverlap, L"");
+        SetWindowTextW(s_hToolOffset, L"");
         return;
     }
     const auto& tp = g_toolPresets[idx];
@@ -378,7 +586,10 @@ static void toolDlgPopulate(int idx) {
     SetWindowTextW(s_hToolFXY,   StringUtils::utf8ToWide(dblStr(tp.feedRateXY, 1)).c_str());
     SetWindowTextW(s_hToolFZ,    StringUtils::utf8ToWide(dblStr(tp.feedRateZ, 1)).c_str());
     SetWindowTextW(s_hToolZDr,   StringUtils::utf8ToWide(dblStr(tp.zDrill)).c_str());
+    SetWindowTextW(s_hToolDrDia, StringUtils::utf8ToWide(dblStr(tp.drillDiameter, 3)).c_str());
     SetWindowTextW(s_hToolDrF,   StringUtils::utf8ToWide(dblStr(tp.drillFeed, 1)).c_str());
+    SetWindowTextW(s_hToolOverlap, StringUtils::utf8ToWide(dblStr(tp.overlap, 2)).c_str());
+    SetWindowTextW(s_hToolOffset,  StringUtils::utf8ToWide(dblStr(tp.offset, 2)).c_str());
 }
 
 static void toolDlgSave(int idx) {
@@ -392,13 +603,17 @@ static void toolDlgSave(int idx) {
     GetWindowTextW(s_hToolFXY, buf, 128);   tp.feedRateXY   = parseD(StringUtils::wideToUtf8(buf));
     GetWindowTextW(s_hToolFZ, buf, 128);    tp.feedRateZ    = parseD(StringUtils::wideToUtf8(buf));
     GetWindowTextW(s_hToolZDr, buf, 128);   tp.zDrill       = parseD(StringUtils::wideToUtf8(buf));
+    GetWindowTextW(s_hToolDrDia, buf, 128); tp.drillDiameter = parseD(StringUtils::wideToUtf8(buf));
     GetWindowTextW(s_hToolDrF, buf, 128);   tp.drillFeed    = parseD(StringUtils::wideToUtf8(buf));
+    GetWindowTextW(s_hToolOverlap, buf, 128); tp.overlap    = parseD(StringUtils::wideToUtf8(buf));
+    GetWindowTextW(s_hToolOffset, buf, 128);  tp.offset     = parseD(StringUtils::wideToUtf8(buf));
+    tp.kind = inferPresetKindFromName(tp.name);
 }
 
 static void toolDlgRefreshList(int sel = -1) {
     SendMessageW(s_hToolList, LB_RESETCONTENT, 0, 0);
     for (auto& tp : g_toolPresets) {
-        std::wstring name = StringUtils::utf8ToWide(tp.name);
+        std::wstring name = L"[" + presetKindTag(tp.kind) + L"] " + StringUtils::utf8ToWide(tp.name);
         SendMessageW(s_hToolList, LB_ADDSTRING, 0, (LPARAM)name.c_str());
     }
     if (sel >= 0 && sel < (int)g_toolPresets.size())
@@ -408,7 +623,7 @@ static void toolDlgRefreshList(int sel = -1) {
 static LRESULT CALLBACK ToolDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_CREATE: {
-            int lbW = 170, lbH = 200;
+            int lbW = 170, lbH = 256;
             int fx = 195, fw = 250, lw = 75;
 
             s_hToolList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
@@ -432,7 +647,10 @@ static LRESULT CALLBACK ToolDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             mkField(4, L"Feed XY:",  s_hToolFXY,   105);
             mkField(5, L"Feed Z:",   s_hToolFZ,    106);
             mkField(6, L"Z Drill:",  s_hToolZDr,   107);
-            mkField(7, L"Drill Feed:", s_hToolDrF,  108);
+            mkField(7, L"Sp. Dia:",  s_hToolDrDia, 108);
+            mkField(8, L"Sp. Feed:", s_hToolDrF,   109);
+            mkField(9, L"Overlap:", s_hToolOverlap, 114);
+            mkField(10, L"Offset:", s_hToolOffset, 115);
 
             // Buttons
             CreateWindowExW(0, L"BUTTON", L"Add", WS_CHILD | WS_VISIBLE,
@@ -440,9 +658,9 @@ static LRESULT CALLBACK ToolDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             CreateWindowExW(0, L"BUTTON", L"Remove", WS_CHILD | WS_VISIBLE,
                 105, lbH + 20, 80, 26, hwnd, (HMENU)111, _core.hInstance, NULL);
             CreateWindowExW(0, L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE,
-                fx, 15 + 8 * 28, 80, 26, hwnd, (HMENU)112, _core.hInstance, NULL);
+                fx, 15 + 11 * 28, 80, 26, hwnd, (HMENU)112, _core.hInstance, NULL);
             CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                fx + 90, 15 + 8 * 28, 80, 26, hwnd, (HMENU)113, _core.hInstance, NULL);
+                fx + 90, 15 + 11 * 28, 80, 26, hwnd, (HMENU)113, _core.hInstance, NULL);
 
             toolDlgRefreshList(g_activeToolIndex);
             s_toolSel = g_activeToolIndex;
@@ -556,7 +774,7 @@ void doShowToolPresets() {
     CreateWindowExW(WS_EX_DLGMODALFRAME,
         L"G2G_ToolPresets", L"Tool Presets",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-        cx, cy, 480, 310,
+        cx, cy, 480, 394,
         g_window->getHandle(), NULL, _core.hInstance, NULL);
 }
 
@@ -582,8 +800,12 @@ Config buildConfigFromGUI() {
     cfg.cam.offset  = d(g_fldOffset);
 
     cfg.job.engraver_feedrate  = d(g_fldFeedXY);
+    cfg.job.engraver_plunge_feedrate = d(g_fldFeedZ);
     cfg.job.spindle_feedrate   = d(g_fldDrillFeed);
     cfg.job.spindle_power      = 255;
+    cfg.job.postProfile        = (g_chkFluidNC && g_chkFluidNC->isChecked())
+        ? PostProfile::FluidNC
+        : PostProfile::Mach3;
 
     return cfg;
 }

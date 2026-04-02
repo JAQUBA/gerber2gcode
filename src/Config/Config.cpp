@@ -131,7 +131,12 @@ Config loadConfig(const std::string& path) {
     cfg.job.laser_power      = getVal(j, "laser_power");
     cfg.job.spindle_power    = getVal(j, "spindle_power");
     cfg.job.laser_feedrate   = getVal(j, "laser_feedrate");
+    cfg.job.engraver_feedrate = getVal(j, "engraver_feedrate");
+    cfg.job.engraver_plunge_feedrate = getVal(j, "engraver_plunge_feedrate", 100.0);
     cfg.job.spindle_feedrate = getVal(j, "spindle_feedrate");
+    cfg.job.postProfile = getVal(j, "post_profile", 0.0) >= 0.5
+        ? PostProfile::FluidNC
+        : PostProfile::Mach3;
 
     return cfg;
 }

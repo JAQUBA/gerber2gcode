@@ -19,8 +19,8 @@ void init() {
 void setup() {
     g_window = new SimpleWindow(1200, 760, "gerber2gcode", 0);
     g_window->init();
-    g_window->setBackgroundColor(RGB(45, 45, 54));
-    g_window->setTextColor(RGB(220, 220, 230));
+    g_window->setBackgroundColor(RGB(34, 37, 46));
+    g_window->setTextColor(RGB(226, 230, 239));
 
     g_settings   = new ConfigManager("gerber2gcode.ini");
     g_toolConfig = new ConfigManager("tools.ini");
@@ -34,8 +34,8 @@ void setup() {
     // Welcome message
     logMsg("gerber2gcode - CNC PCB Isolation Router");
     logMsg("1. Click 'Open KiCad' or enter directory path");
-    logMsg("2. Select tool preset and adjust parameters");
-    logMsg("3. Check Isolation/Drilling/Cutout options");
+    logMsg("2. Select tool preset (auto-configures all job options)");
+    logMsg("3. Set laminate thickness only (Mat)");
     logMsg("4. Click Generate");
     logMsg("");
 

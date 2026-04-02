@@ -22,6 +22,13 @@
 // Tool Preset
 // ════════════════════════════════════════════════════════════════════════════
 
+enum class ToolPresetKind {
+    Isolation,
+    Combo,
+    Drill,
+    Cutout
+};
+
 struct ToolPreset {
     std::string name        = "New Tool";
     double toolDiameter     = 0.2;      // mm (engraver tip width)
@@ -30,7 +37,16 @@ struct ToolPreset {
     double feedRateXY       = 300.0;    // mm/min
     double feedRateZ        = 100.0;    // mm/min (plunge rate)
     double zDrill           = 2.0;      // mm (drill depth from top, positive)
+    double drillDiameter    = 0.8;      // mm (spindle tool diameter for drilling/cutout)
     double drillFeed        = 60.0;     // mm/min (spindle feedrate)
+    double overlap          = 0.40;     // isolation overlap ratio
+    double offset           = 0.02;     // isolation safety offset [mm]
+    double xOffset          = 0.0;      // board X offset [mm]
+    double yOffset          = 0.0;      // board Y offset [mm]
+    bool   flip             = false;    // mirror board
+    bool   ignoreVia        = false;    // skip via holes
+    bool   debugImage       = true;     // emit debug BMP
+    ToolPresetKind kind     = ToolPresetKind::Isolation;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -81,6 +97,7 @@ extern InputField*    g_fldDrillFeed;
 extern CheckBox*      g_chkFlip;
 extern CheckBox*      g_chkIgnoreVia;
 extern CheckBox*      g_chkDebug;
+extern CheckBox*      g_chkFluidNC;
 
 // Tool dropdown button
 extern Button*        g_btnTool;

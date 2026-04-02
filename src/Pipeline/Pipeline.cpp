@@ -281,9 +281,9 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
             log("Isolation: skipped (disabled)");
         }
 
-        // Generate cutout path (board outline offset outward by tool radius)
+        // Generate cutout path (board outline offset outward by spindle tool radius)
         if (params.generateCutout) {
-            double toolR = config.machine.engraver_tip_width / 2.0;
+            double toolR = config.machine.spindle_tool_diameter / 2.0;
             double cutoutOff = toolR + config.machine.cutout_offset;
             geo::Paths outPaths = geo::offset({outline}, cutoutOff);
             if (!outPaths.empty() && !outPaths[0].empty()) {
