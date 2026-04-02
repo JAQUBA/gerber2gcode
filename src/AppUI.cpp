@@ -155,41 +155,18 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
         }
         return 0;
     }
-    // Layer panel click handler — dynamic sections
+    // Layer panel click handler — uses g_layerItems mapping
     if (msg == WM_COMMAND && LOWORD(wParam) == LP_ID && HIWORD(wParam) == LBN_SELCHANGE) {
         int idx = (int)SendMessageW(g_hLayerPanel, LB_GETCURSEL, 0, 0);
-        if (idx >= 0 && g_canvas) {
-            // Read the item text to determine what was clicked
-            wchar_t buf[128] = {};
-            SendMessageW(g_hLayerPanel, LB_GETTEXT, idx, (LPARAM)buf);
-            std::wstring text(buf);
-
-            // Skip section headers (start with ──)
-            if (text.find(L"\u2500\u2500") != std::wstring::npos) {
-                SendMessageW(g_hLayerPanel, LB_SETCURSEL, (WPARAM)-1, 0);
-                return DefSubclassProc(hwnd, msg, wParam, lParam);
+        if (idx >= 0 && idx < (int)g_layerItems.size() && g_canvas) {
+            auto& item = g_layerItems[idx];
+            if (!item.isSection && item.flag) {
+                *item.flag = !(*item.flag);
+                rebuildLayerPanel();
+                g_canvas->redraw();
             }
-
-            // Determine which layer was toggled by matching the item text
-            auto& lay = g_canvas->layers();
-            if      (text.find(L"Board Outline")    != std::wstring::npos)  lay.outline      = !lay.outline;
-            else if (text.find(L"Copper Top")       != std::wstring::npos)  lay.copperTop     = !lay.copperTop;
-            else if (text.find(L"Copper Bottom")    != std::wstring::npos)  lay.copperBottom  = !lay.copperBottom;
-            else if (text.find(L"Mask Top")         != std::wstring::npos)  lay.maskTop       = !lay.maskTop;
-            else if (text.find(L"Mask Bottom")      != std::wstring::npos)  lay.maskBottom    = !lay.maskBottom;
-            else if (text.find(L"Silkscreen Top")   != std::wstring::npos)  lay.silkTop       = !lay.silkTop;
-            else if (text.find(L"Silkscreen Bot")   != std::wstring::npos)  lay.silkBottom    = !lay.silkBottom;
-            else if (text.find(L"Paste Top")        != std::wstring::npos)  lay.pasteTop      = !lay.pasteTop;
-            else if (text.find(L"Paste Bottom")     != std::wstring::npos)  lay.pasteBottom   = !lay.pasteBottom;
-            else if (text.find(L"PTH Drills")       != std::wstring::npos)  lay.drillsPTH     = !lay.drillsPTH;
-            else if (text.find(L"NPTH Drills")      != std::wstring::npos)  lay.drillsNPTH    = !lay.drillsNPTH;
-            else if (text.find(L"Clearance")        != std::wstring::npos)  lay.clearance     = !lay.clearance;
-            else if (text.find(L"Isolation Paths")  != std::wstring::npos)  lay.isolation     = !lay.isolation;
-            else if (text.find(L"Cutout Path")      != std::wstring::npos)  lay.cutout        = !lay.cutout;
-
-            rebuildLayerPanel();
-            g_canvas->redraw();
         }
+        SendMessageW(g_hLayerPanel, LB_SETCURSEL, (WPARAM)-1, 0);
     }
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }

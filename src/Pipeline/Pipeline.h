@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <set>
 
 using LogCallback = std::function<void(const std::string&)>;
 
@@ -22,6 +23,9 @@ struct PipelineParams {
     bool generateIsolation = true;
     bool generateDrilling  = true;
     bool generateCutout    = false;
+    // Drill diameter filter — diameters listed here are excluded from G-Code
+    // Key format: "%.3f" of diameter in mm (e.g. "0.800", "3.200")
+    std::set<std::string> disabledDrillDiameters;
 };
 
 struct KicadFiles {

@@ -1,5 +1,7 @@
 #include "PCBCanvas.h"
 #include <cmath>
+#include <map>
+#include <cstdio>
 
 // ════════════════════════════════════════════════════════════════════════════
 // Colors — layer palette
@@ -116,8 +118,8 @@ void PCBCanvas::onDraw(HDC hdc, const RECT& rc) {
     if (m_layers.silkTop)       drawPolygons(hdc, m_silkTop,     CLR_SILK_TOP);
     if (m_layers.outline)       drawOutline(hdc);
     if (m_layers.isolation)     drawIsolation(hdc);
-    if (m_layers.drillsNPTH)    drawDrills(hdc, m_drillsNPTH, CLR_NPTH);
-    if (m_layers.drillsPTH)     drawDrills(hdc, m_drillsPTH,  CLR_PTH);
+    if (m_layers.drillsNPTH)    drawDrills(hdc, m_drillsNPTH, m_drillFilterNPTH, CLR_NPTH);
+    if (m_layers.drillsPTH)     drawDrills(hdc, m_drillsPTH,  m_drillFilterPTH,  CLR_PTH);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -178,15 +180,27 @@ void PCBCanvas::drawIsolation(HDC hdc) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// drawDrills — drill holes as circles with center cross
+// drawDrills — drill holes as circles with center cross (filtered by diameter)
 // ════════════════════════════════════════════════════════════════════════════
 
-void PCBCanvas::drawDrills(HDC hdc, const std::vector<DrillHole>* drills, COLORREF color) {
+void PCBCanvas::drawDrills(HDC hdc, const std::vector<DrillHole>* drills,
+                           const std::vector<DrillFilter>& filters, COLORREF color) {
     if (!drills || drills->empty()) return;
+
+    // Build set of hidden diameters for fast lookup
+    std::map<int, bool> hiddenDia; // key = diameter * 1000 (integer microns)
+    for (auto& f : filters) {
+        if (!f.visible)
+            hiddenDia[(int)(f.diameter * 1000 + 0.5)] = true;
+    }
 
     HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
 
     for (auto& d : *drills) {
+        // Skip holes with hidden diameter
+        int diaKey = (int)(d.diameter * 1000 + 0.5);
+        if (hiddenDia.count(diaKey)) continue;
+
         double r = d.diameter * 0.5;
 
         // Circle outline
@@ -211,4 +225,38 @@ void PCBCanvas::drawDrills(HDC hdc, const std::vector<DrillHole>* drills, COLORR
     }
 
     SelectObject(hdc, oldBrush);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// buildDrillFilters — group drill holes by diameter, preserve visibility
+// ════════════════════════════════════════════════════════════════════════════
+
+void PCBCanvas::buildDrillFilters(const std::vector<DrillHole>* drills,
+                                   std::vector<DrillFilter>& filters) {
+    // Preserve old visibility state
+    std::map<int, bool> oldState; // key = diameter * 1000
+    for (auto& f : filters)
+        oldState[(int)(f.diameter * 1000 + 0.5)] = f.visible;
+
+    filters.clear();
+    if (!drills || drills->empty()) return;
+
+    // Count holes per diameter
+    std::map<int, std::pair<double, int>> groups; // key → (diameter, count)
+    for (auto& h : *drills) {
+        int key = (int)(h.diameter * 1000 + 0.5);
+        if (groups.count(key))
+            groups[key].second++;
+        else
+            groups[key] = {h.diameter, 1};
+    }
+
+    // Build sorted filter list
+    for (auto& [key, grp] : groups) {
+        DrillFilter f;
+        f.diameter = grp.first;
+        f.count    = grp.second;
+        f.visible  = oldState.count(key) ? oldState[key] : true;
+        filters.push_back(f);
+    }
 }

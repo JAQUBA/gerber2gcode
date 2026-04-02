@@ -232,6 +232,25 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
         if (params.generateDrilling) {
             allHoles = result.allDrills();
 
+            // Filter out disabled drill diameters
+            if (!params.disabledDrillDiameters.empty()) {
+                int beforeCount = (int)allHoles.size();
+                allHoles.erase(
+                    std::remove_if(allHoles.begin(), allHoles.end(),
+                        [&](const DrillHole& h) {
+                            char key[16];
+                            _snprintf(key, sizeof(key), "%.3f", h.diameter);
+                            return params.disabledDrillDiameters.count(key) > 0;
+                        }),
+                    allHoles.end());
+                int removed = beforeCount - (int)allHoles.size();
+                if (removed > 0) {
+                    char buf[80];
+                    _snprintf(buf, sizeof(buf), "Filtered out %d holes (disabled diameters)", removed);
+                    log(buf);
+                }
+            }
+
             // Warn about undersized holes
             double toolD = config.machine.spindle_tool_diameter;
             int undersized = 0;

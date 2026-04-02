@@ -47,7 +47,7 @@ gerber2gcode/
 | **main.cpp** | `init()` (COM init), `setup()` (window + menu + UI + canvas), `loop()` (empty — event-driven). Minimal, delegates everything. |
 | **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates. Layer panel: `rebuildLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
 | **AppUI** | `createUI(SimpleWindow*)` — 3-row toolbar (Open KiCad / Export / Tool dropdown / parameter fields / Generate / checkboxes), canvas, layer panel, log area, progress bar. `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Isolation-affecting fields (Tip, Overlap, Offset) have `onTextChange` callbacks that trigger debounced auto-refresh. Position fields (X/Y offset) and checkboxes (Flip, No Vias) trigger full reparse. Browse KiCad button immediately loads and previews the selected directory. |
-| **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` structs. `zoomToFit()`. Back-to-front rendering order. |
+| **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` structs. `DrillFilter` groups holes by diameter for per-diameter visibility. `zoomToFit()`. Back-to-front rendering order. |
 | **Config** | `Config` struct with `MachineConfig` (engraver Z, tip width, drill Z, feedrates, offsets), `CamConfig` (overlap, offset), `JobConfig` (engraver/spindle/laser feedrates). `loadConfig()` — minimal JSON parser. |
 | **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Outputs `geo::Paths` (Clipper2). |
 | **DrillParser** | Excellon parser: tool table (`TnnCdia`), coordinates, METRIC/INCH units, rout mode (M15/M16), slotted holes (G85 — skipped), via filtering. Outputs `std::vector<DrillHole>`. |
@@ -380,7 +380,15 @@ Add logic in `Pipeline.cpp` — both `runPipeline()` (full) and `parsePipelineDa
 
 ### Layer Panel
 
-Right-side LISTBOX (`g_hLayerPanel`, ID 9500) with section headers (prefixed `──`) and toggleable layers (☑/☐ prefix). Click handler matches text to toggle `LayerVisibility` flags. `rebuildLayerPanel()` called after loading KiCad files.
+Right-side LISTBOX (`g_hLayerPanel`, ID 9500) with section headers (prefixed `──`) and toggleable layers (☑/☐ prefix). `g_layerItems` vector maps each listbox index to a `LayerPanelItem` with a `bool*` toggle target. Click handler in `ResizeProc` looks up the clicked index and toggles the pointed-to flag. `rebuildLayerPanel()` called after loading KiCad files.
+
+#### Drill Diameter Sub-Items
+
+Under "PTH Drills" / "NPTH Drills", the layer panel shows per-diameter sub-items (e.g. "Ø0.800mm (4)") with extra indentation. Each sub-item toggles a `DrillFilter::visible` flag in `PCBCanvas`. `DrillFilter` groups drill holes by diameter (integer microns key), preserving user visibility state across rebuilds.
+
+- **Canvas**: `drawDrills()` skips holes whose diameter is hidden via `DrillFilter`
+- **G-Code**: `generateThread()` collects disabled drill diameters from canvas filters into `PipelineParams::disabledDrillDiameters`. `runPipeline()` filters holes before G-Code emission
+- **Parent toggle**: "PTH Drills" / "NPTH Drills" acts as master on/off for the entire category; sub-items provide fine-grained per-diameter control within that category
 
 ### SimpleWindow is a Singleton
 

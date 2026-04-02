@@ -34,6 +34,17 @@ struct ToolPreset {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
+// Layer Panel Item — maps listbox index to toggle action
+// ════════════════════════════════════════════════════════════════════════════
+
+struct LayerPanelItem {
+    bool  isSection;        // true = non-clickable header
+    bool* flag = nullptr;   // pointer to bool to toggle (null for sections)
+};
+
+extern std::vector<LayerPanelItem> g_layerItems;
+
+// ════════════════════════════════════════════════════════════════════════════
 // Global State (extern declarations)
 // ════════════════════════════════════════════════════════════════════════════
 

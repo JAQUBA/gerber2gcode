@@ -62,6 +62,7 @@ volatile bool  g_isRunning     = false;
 std::string    g_lastDebugPath;
 
 HWND           g_hLayerPanel   = nullptr;
+std::vector<LayerPanelItem> g_layerItems;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Auto-refresh debounce
@@ -566,65 +567,86 @@ Config buildConfigFromGUI() {
 void rebuildLayerPanel() {
     if (!g_hLayerPanel || !g_canvas) return;
     SendMessageW(g_hLayerPanel, LB_RESETCONTENT, 0, 0);
+    g_layerItems.clear();
 
     auto& lay = g_canvas->layers();
     auto& pres = g_canvas->presence();
 
     // Each item is either a section header (non-clickable) or a toggleable layer.
-    // We store a mapping from listbox index → layer flag pointer so toggle works.
-    // Section headers are indicated by starting with "── ".
+    // g_layerItems maps listbox indices to bool* toggle targets.
 
     auto addSection = [](const wchar_t* name) {
         std::wstring text = L"\u2500\u2500 ";
         text += name;
         text += L" \u2500\u2500";
         SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
+        g_layerItems.push_back({true, nullptr});
     };
 
-    auto addItem = [](const wchar_t* name, bool visible) {
+    auto addItem = [](const wchar_t* name, bool visible, bool* flag) {
         std::wstring text = visible ? L"  \u2611 " : L"  \u2610 ";
         text += name;
         SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
+        g_layerItems.push_back({false, flag});
+    };
+
+    auto addSubItem = [](const wchar_t* name, bool visible, bool* flag) {
+        std::wstring text = visible ? L"      \u2611 " : L"      \u2610 ";
+        text += name;
+        SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
+        g_layerItems.push_back({false, flag});
     };
 
     // ── Board ──
     addSection(L"Board");
-    addItem(L"Board Outline", lay.outline);             // index 1
+    addItem(L"Board Outline", lay.outline, &lay.outline);
 
     // ── Copper ──
     if (pres.copperTop || pres.copperBottom) {
         addSection(L"Copper");
-        if (pres.copperTop)    addItem(L"Copper Top (F_Cu)",    lay.copperTop);
-        if (pres.copperBottom) addItem(L"Copper Bottom (B_Cu)", lay.copperBottom);
+        if (pres.copperTop)    addItem(L"Copper Top (F_Cu)",    lay.copperTop,    &lay.copperTop);
+        if (pres.copperBottom) addItem(L"Copper Bottom (B_Cu)", lay.copperBottom, &lay.copperBottom);
     }
 
     // ── Layers ──
     if (pres.maskTop || pres.maskBottom || pres.silkTop || pres.silkBottom ||
         pres.pasteTop || pres.pasteBottom) {
         addSection(L"Layers");
-        if (pres.maskTop)      addItem(L"Mask Top",       lay.maskTop);
-        if (pres.maskBottom)   addItem(L"Mask Bottom",    lay.maskBottom);
-        if (pres.silkTop)      addItem(L"Silkscreen Top", lay.silkTop);
-        if (pres.silkBottom)   addItem(L"Silkscreen Bot", lay.silkBottom);
-        if (pres.pasteTop)     addItem(L"Paste Top",      lay.pasteTop);
-        if (pres.pasteBottom)  addItem(L"Paste Bottom",   lay.pasteBottom);
+        if (pres.maskTop)      addItem(L"Mask Top",       lay.maskTop,      &lay.maskTop);
+        if (pres.maskBottom)   addItem(L"Mask Bottom",    lay.maskBottom,   &lay.maskBottom);
+        if (pres.silkTop)      addItem(L"Silkscreen Top", lay.silkTop,      &lay.silkTop);
+        if (pres.silkBottom)   addItem(L"Silkscreen Bot", lay.silkBottom,   &lay.silkBottom);
+        if (pres.pasteTop)     addItem(L"Paste Top",      lay.pasteTop,     &lay.pasteTop);
+        if (pres.pasteBottom)  addItem(L"Paste Bottom",   lay.pasteBottom,  &lay.pasteBottom);
     }
 
-    // ── Drills ──
+    // ── Drills with per-diameter sub-items ──
     if (pres.drillsPTH || pres.drillsNPTH) {
         addSection(L"Drills");
-        if (pres.drillsPTH)    addItem(L"PTH Drills",     lay.drillsPTH);
-        if (pres.drillsNPTH)   addItem(L"NPTH Drills",    lay.drillsNPTH);
+        if (pres.drillsPTH) {
+            addItem(L"PTH Drills", lay.drillsPTH, &lay.drillsPTH);
+            for (auto& f : g_canvas->drillFilterPTH()) {
+                wchar_t buf[64];
+                _snwprintf(buf, 64, L"\u00D8%.3fmm (%d)", f.diameter, f.count);
+                addSubItem(buf, f.visible, &f.visible);
+            }
+        }
+        if (pres.drillsNPTH) {
+            addItem(L"NPTH Drills", lay.drillsNPTH, &lay.drillsNPTH);
+            for (auto& f : g_canvas->drillFilterNPTH()) {
+                wchar_t buf[64];
+                _snwprintf(buf, 64, L"\u00D8%.3fmm (%d)", f.diameter, f.count);
+                addSubItem(buf, f.visible, &f.visible);
+            }
+        }
     }
 
     // ── Generated ──
     if (pres.clearance || pres.isolation) {
         addSection(L"Generated");
-        if (pres.clearance)    addItem(L"Clearance",       lay.clearance);
-        if (pres.isolation)    addItem(L"Isolation Paths", lay.isolation);
+        if (pres.clearance)    addItem(L"Clearance",       lay.clearance,  &lay.clearance);
+        if (pres.isolation)    addItem(L"Isolation Paths", lay.isolation,  &lay.isolation);
     }
-    // Cutout always available as a toggle (even without data yet)
-    // addItem(L"Cutout Path",    lay.cutout);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -742,6 +764,19 @@ static DWORD WINAPI generateThread(LPVOID) {
             params.generateIsolation = lay.isolation;
             params.generateDrilling  = lay.drillsPTH || lay.drillsNPTH;
             params.generateCutout    = lay.cutout;
+
+            // Collect disabled drill diameters from canvas filters
+            auto collectDisabled = [&](const std::vector<DrillFilter>& filters) {
+                for (auto& f : filters) {
+                    if (!f.visible) {
+                        char key[16];
+                        std::snprintf(key, sizeof(key), "%.3f", f.diameter);
+                        params.disabledDrillDiameters.insert(key);
+                    }
+                }
+            };
+            collectDisabled(g_canvas->drillFilterPTH());
+            collectDisabled(g_canvas->drillFilterNPTH());
         }
 
         g_lastDebugPath.clear();

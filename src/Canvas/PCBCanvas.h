@@ -4,6 +4,17 @@
 #include "Toolpath/Toolpath.h"
 #include "Drill/DrillParser.h"
 #include <vector>
+#include <map>
+
+// ════════════════════════════════════════════════════════════════════════════
+// Drill diameter filter — per-diameter visibility for drill sub-items
+// ════════════════════════════════════════════════════════════════════════════
+
+struct DrillFilter {
+    double diameter;
+    int    count;
+    bool   visible = true;
+};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Layer visibility flags — grouped
@@ -77,8 +88,18 @@ public:
     void setPasteBottom(const geo::Paths* p)    { m_pasteBottom = p; m_presence.pasteBottom = (p && !p->empty()); }
 
     // Data setters — drills
-    void setDrillsPTH(const std::vector<DrillHole>* p)  { m_drillsPTH = p; m_presence.drillsPTH = (p && !p->empty()); }
-    void setDrillsNPTH(const std::vector<DrillHole>* p) { m_drillsNPTH = p; m_presence.drillsNPTH = (p && !p->empty()); }
+    void setDrillsPTH(const std::vector<DrillHole>* p)  {
+        m_drillsPTH = p; m_presence.drillsPTH = (p && !p->empty());
+        buildDrillFilters(p, m_drillFilterPTH);
+    }
+    void setDrillsNPTH(const std::vector<DrillHole>* p) {
+        m_drillsNPTH = p; m_presence.drillsNPTH = (p && !p->empty());
+        buildDrillFilters(p, m_drillFilterNPTH);
+    }
+
+    // Drill diameter filters
+    std::vector<DrillFilter>& drillFilterPTH()  { return m_drillFilterPTH; }
+    std::vector<DrillFilter>& drillFilterNPTH() { return m_drillFilterNPTH; }
 
     // Data setters — generated
     void setClearance(const geo::Paths* p)                          { m_clearance = p; m_presence.clearance = (p && !p->empty()); }
@@ -94,7 +115,10 @@ private:
     void drawOutline(HDC hdc);
     void drawPolygons(HDC hdc, const geo::Paths* paths, COLORREF color);
     void drawIsolation(HDC hdc);
-    void drawDrills(HDC hdc, const std::vector<DrillHole>* drills, COLORREF color);
+    void drawDrills(HDC hdc, const std::vector<DrillHole>* drills,
+                    const std::vector<DrillFilter>& filters, COLORREF color);
+    void buildDrillFilters(const std::vector<DrillHole>* drills,
+                           std::vector<DrillFilter>& filters);
 
     LayerVisibility m_layers;
     LayerPresence   m_presence;
@@ -113,6 +137,8 @@ private:
     // Drills
     const std::vector<DrillHole>*   m_drillsPTH     = nullptr;
     const std::vector<DrillHole>*   m_drillsNPTH    = nullptr;
+    std::vector<DrillFilter>        m_drillFilterPTH;
+    std::vector<DrillFilter>        m_drillFilterNPTH;
 
     // Generated
     const geo::Paths*                       m_clearance = nullptr;
