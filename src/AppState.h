@@ -99,6 +99,7 @@ extern CheckBox*      g_chkFlip;
 extern CheckBox*      g_chkIgnoreVia;
 extern CheckBox*      g_chkEngraverSpindle;
 extern CheckBox*      g_chkUseArcs;
+extern CheckBox*      g_chkCutout;
 
 // Drill dwell field
 extern InputField*    g_fldDrillDwell;

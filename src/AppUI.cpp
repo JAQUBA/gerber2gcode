@@ -435,6 +435,10 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
             if (!item.isSection && item.flag) {
                 *item.flag = !(*item.flag);
 
+                // Sync cutout checkbox when cutout layer is toggled in panel
+                if (g_chkCutout && item.flag == &g_canvas->layers().cutout)
+                    g_chkCutout->setChecked(*item.flag);
+
                 // Check if toggled flag belongs to copper sub-visibility or pad group
                 bool isCopperSub = false;
                 {
@@ -601,8 +605,20 @@ void createUI(SimpleWindow* win) {
         SendMessageW(g_hwndCopperSide, CB_SETCURSEL, 0, 0);
     }
 
-    addLabel(win, m + 290, y + 4, 560,
-        L"Select which copper layer to isolate. \"Bottom\" mirrors the board for back-side machining.",
+    addLabel(win, m + 290, y + 4, 44, L"Cut:", 10, true);
+    g_chkCutout = new CheckBox(m + 334, y + 2, 100, 25, "Cutout", false,
+        [](CheckBox* chk, bool checked) {
+            if (g_canvas) {
+                g_canvas->layers().cutout = checked;
+                rebuildLayerPanel();
+                g_canvas->redraw();
+            }
+        });
+    win->add(g_chkCutout);
+    styleCheck(g_chkCutout);
+
+    addLabel(win, m + 444, y + 4, 480,
+        L"Layer: which copper side to isolate. Check \"Cutout\" to mill board outline.",
         9, false);
 
     // ── Canvas (will be repositioned by doResize) ────────────────────────

@@ -56,6 +56,7 @@ CheckBox*      g_chkFlip       = nullptr;
 CheckBox*      g_chkIgnoreVia  = nullptr;
 CheckBox*      g_chkEngraverSpindle = nullptr;
 CheckBox*      g_chkUseArcs    = nullptr;
+CheckBox*      g_chkCutout     = nullptr;
 
 InputField*    g_fldDrillDwell = nullptr;
 
@@ -221,6 +222,7 @@ static void applyPresetJobMode(ToolPresetKind kind) {
             lay.cutout = true;
             break;
     }
+    if (g_chkCutout) g_chkCutout->setChecked(lay.cutout);
 }
 
 static void applyPresetManagedValues(const ToolPreset& tp) {
@@ -319,6 +321,7 @@ void loadSettings() {
         lay.drillsPTH = s.getValue("gen_drilling", "1") == "1";
         lay.drillsNPTH = s.getValue("gen_drilling", "1") == "1";
         lay.cutout = s.getValue("gen_cutout", "0") == "1";
+        if (g_chkCutout) g_chkCutout->setChecked(lay.cutout);
     }
 
     // Load tool presets
@@ -1121,6 +1124,7 @@ static void updateCanvasFromPipelineData() {
     g_canvas->setGridExtent(d.boardW + 10, d.boardH + 10);
     g_canvas->zoomToFit(d.boardW, d.boardH);
     rebuildLayerPanel();
+    if (g_chkCutout) g_chkCutout->setChecked(g_canvas->layers().cutout);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

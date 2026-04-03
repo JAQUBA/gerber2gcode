@@ -593,7 +593,7 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
 
         // Generate cutout path for preview
         {
-            double toolR = params.config.machine.engraver_tip_width / 2.0;
+            double toolR = params.config.machine.spindle_tool_diameter / 2.0;
             double cutoutOff = toolR + params.config.machine.cutout_offset;
             geo::Paths outPaths = geo::offset({outline}, cutoutOff);
             if (!outPaths.empty() && !outPaths[0].empty()) {
