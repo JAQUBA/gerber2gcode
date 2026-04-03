@@ -1,19 +1,30 @@
 #include <windows.h>
 
+// Application icon
+101 ICON "gerber2gcode.ico"
+
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION     1,0,0,0
 PRODUCTVERSION  1,0,0,0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "FileDescription", "Laser PCB GCode Generator"
-            VALUE "InternalName", "gerber2gcode"
+            VALUE "FileDescription",  "Gerber to G-Code converter for CNC PCB isolation routing"
+            VALUE "InternalName",     "gerber2gcode"
             VALUE "OriginalFilename", "gerber2gcode.exe"
-            VALUE "ProductName", "gerber2gcode"
-            VALUE "FileVersion", "1.0.0"
-            VALUE "ProductVersion", "1.0.0"
+            VALUE "ProductName",      "gerber2gcode"
+            VALUE "CompanyName",      "JAQUBA"
+            VALUE "LegalCopyright",   "Copyright (C) 2024-2026 JAQUBA"
+            VALUE "Comments",         "Converts KiCad RS-274X Gerber and Excellon drill files to FluidNC-compatible G-Code for CNC PCB milling."
+            VALUE "FileVersion",      "1.0.0"
+            VALUE "ProductVersion",   "1.0.0"
         END
     END
     BLOCK "VarFileInfo"

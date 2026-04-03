@@ -54,7 +54,6 @@ InputField*    g_fldDrillFeed  = nullptr;
 
 CheckBox*      g_chkFlip       = nullptr;
 CheckBox*      g_chkIgnoreVia  = nullptr;
-CheckBox*      g_chkDebug      = nullptr;
 CheckBox*      g_chkEngraverSpindle = nullptr;
 CheckBox*      g_chkUseArcs    = nullptr;
 
@@ -65,7 +64,7 @@ Button*        g_btnGenerate   = nullptr;
 
 PipelineResult g_pipelineData;
 volatile bool  g_isRunning     = false;
-std::string    g_lastDebugPath;
+std::string    g_lastKicadDir;
 
 HWND           g_hLayerPanel   = nullptr;
 std::vector<LayerPanelItem> g_layerItems;
@@ -73,7 +72,6 @@ std::vector<LayerPanelItem> g_layerItems;
 // Option flags (controlled via Options menu, preset-initialised)
 bool  g_optFlip             = false;
 bool  g_optIgnoreVia        = false;
-bool  g_optDebugImage       = true;
 bool  g_optEngraverSpindle  = false;
 HMENU g_hMenuBar            = nullptr;
 
@@ -231,13 +229,11 @@ static void applyPresetManagedValues(const ToolPreset& tp) {
     if (g_fldYOffset)   g_fldYOffset->setText(dblStr(tp.yOffset, 2).c_str());
     if (g_chkFlip)      g_chkFlip->setChecked(tp.flip);
     if (g_chkIgnoreVia) g_chkIgnoreVia->setChecked(tp.ignoreVia);
-    if (g_chkDebug)     g_chkDebug->setChecked(tp.debugImage);
     if (g_chkEngraverSpindle) g_chkEngraverSpindle->setChecked(tp.engraverSpindle);
     if (g_fldDrillDwell) g_fldDrillDwell->setText(dblStr(tp.drillDwell, 3).c_str());
     // Update global option flags and sync menu checkmarks
     g_optFlip             = tp.flip;
     g_optIgnoreVia        = tp.ignoreVia;
-    g_optDebugImage       = tp.debugImage;
     g_optEngraverSpindle  = tp.engraverSpindle;
     syncMenuOptionCheckmarks();
 }
@@ -250,7 +246,6 @@ void syncMenuOptionCheckmarks() {
     if (!g_hMenuBar) return;
     CheckMenuItem(g_hMenuBar, IDM_OPT_FLIP,    MF_BYCOMMAND | (g_optFlip            ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(g_hMenuBar, IDM_OPT_NOVIAS,  MF_BYCOMMAND | (g_optIgnoreVia       ? MF_CHECKED : MF_UNCHECKED));
-    CheckMenuItem(g_hMenuBar, IDM_OPT_DEBUG,   MF_BYCOMMAND | (g_optDebugImage      ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(g_hMenuBar, IDM_OPT_SPINDLE, MF_BYCOMMAND | (g_optEngraverSpindle ? MF_CHECKED : MF_UNCHECKED));
 }
 
@@ -291,7 +286,6 @@ void loadSettings() {
 
     if (g_chkFlip)       g_chkFlip->setChecked(s.getValue("flip", "0") == "1");
     if (g_chkIgnoreVia)  g_chkIgnoreVia->setChecked(s.getValue("ignore_via", "0") == "1");
-    if (g_chkDebug)      g_chkDebug->setChecked(s.getValue("debug_image", "1") == "1");
     if (g_chkEngraverSpindle) g_chkEngraverSpindle->setChecked(s.getValue("engraver_spindle", "0") == "1");
     if (g_chkUseArcs) g_chkUseArcs->setChecked(s.getValue("use_arcs", "1") == "1");
     if (g_fldDrillDwell) g_fldDrillDwell->setText(s.getValue("drill_dwell", "0").c_str());
@@ -299,7 +293,6 @@ void loadSettings() {
     // Load option flags (drive Options menu checkmarks)
     g_optFlip            = s.getValue("flip",             "0") == "1";
     g_optIgnoreVia       = s.getValue("ignore_via",       "0") == "1";
-    g_optDebugImage      = s.getValue("debug_image",      "1") == "1";
     g_optEngraverSpindle = s.getValue("engraver_spindle", "0") == "1";
     syncMenuOptionCheckmarks();
 
@@ -338,14 +331,12 @@ void saveSettings() {
 
     if (g_chkFlip)       s.setValue("flip",          g_chkFlip->isChecked() ? "1" : "0");
     if (g_chkIgnoreVia)  s.setValue("ignore_via",    g_chkIgnoreVia->isChecked() ? "1" : "0");
-    if (g_chkDebug)      s.setValue("debug_image",   g_chkDebug->isChecked() ? "1" : "0");
     if (g_chkEngraverSpindle) s.setValue("engraver_spindle", g_chkEngraverSpindle->isChecked() ? "1" : "0");
     if (g_chkUseArcs) s.setValue("use_arcs", g_chkUseArcs->isChecked() ? "1" : "0");
     if (g_fldDrillDwell) s.setValue("drill_dwell",   g_fldDrillDwell->getText());
     // Save option flags
     s.setValue("flip",             g_optFlip            ? "1" : "0");
     s.setValue("ignore_via",       g_optIgnoreVia       ? "1" : "0");
-    s.setValue("debug_image",      g_optDebugImage      ? "1" : "0");
     s.setValue("engraver_spindle", g_optEngraverSpindle ? "1" : "0");
 
     // Save layer visibility from canvas
@@ -385,7 +376,6 @@ void createDefaultToolPresets() {
         tp.yOffset = 0.0;
         tp.flip = false;
         tp.ignoreVia = false;
-        tp.debugImage = true;
         tp.engraverSpindle = false;
         tp.drillDwell = 0.0;
         tp.kind = kind;
@@ -462,7 +452,6 @@ void loadToolPresets() {
             tp.yOffset      = parseD(tc.getValue(p + "yOffset", "0"));
             tp.flip         = tc.getValue(p + "flip", "0") == "1";
             tp.ignoreVia    = tc.getValue(p + "ignoreVia", "0") == "1";
-            tp.debugImage   = tc.getValue(p + "debugImage", "1") == "1";
             tp.engraverSpindle = tc.getValue(p + "engraverSpindle", "0") == "1";
             tp.drillDwell   = parseD(tc.getValue(p + "drillDwell", "0"));
             g_toolPresets.push_back(tp);
@@ -501,7 +490,6 @@ void saveToolPresets() {
         tc.setValue(p + "yOffset",      dblStr(tp.yOffset, 2));
         tc.setValue(p + "flip",         tp.flip ? "1" : "0");
         tc.setValue(p + "ignoreVia",    tp.ignoreVia ? "1" : "0");
-        tc.setValue(p + "debugImage",   tp.debugImage ? "1" : "0");
         tc.setValue(p + "engraverSpindle", tp.engraverSpindle ? "1" : "0");
         tc.setValue(p + "drillDwell",   dblStr(tp.drillDwell, 3));
         tc.setValue(p + "kind",         presetKindToKey(tp.kind));
@@ -1222,16 +1210,7 @@ static DWORD WINAPI generateThread(LPVOID) {
             }
         }
 
-        g_lastDebugPath.clear();
-        bool doDebug = g_optDebugImage;
-        if (doDebug) {
-            std::string dbg = outputFile;
-            size_t dot = dbg.rfind('.');
-            if (dot != std::string::npos) dbg = dbg.substr(0, dot);
-            dbg += "_debug.bmp";
-            params.debugPath = dbg;
-            g_lastDebugPath = dbg;
-        }
+        g_lastKicadDir.clear();
 
         logMsg("=== Starting GCode generation ===");
         logMsg("");

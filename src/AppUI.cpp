@@ -631,7 +631,6 @@ void createUI(SimpleWindow* win) {
         AppendMenuW(hOpts, MF_STRING | (g_optFlip            ? MF_CHECKED : 0), IDM_OPT_FLIP,    L"&Flip board (mirror X)");
         AppendMenuW(hOpts, MF_STRING | (g_optIgnoreVia       ? MF_CHECKED : 0), IDM_OPT_NOVIAS,  L"Ignore &via holes");
         AppendMenuW(hOpts, MF_SEPARATOR, 0, NULL);
-        AppendMenuW(hOpts, MF_STRING | (g_optDebugImage      ? MF_CHECKED : 0), IDM_OPT_DEBUG,   L"Generate &debug BMP");
         AppendMenuW(hOpts, MF_STRING | (g_optEngraverSpindle ? MF_CHECKED : 0), IDM_OPT_SPINDLE, L"&Engraver spindle M3");
 
         AppendMenuW(hTools, MF_STRING, IDM_TOOLS_MANAGE, L"&Manage tools...");
@@ -680,10 +679,6 @@ void createUI(SimpleWindow* win) {
                 g_optIgnoreVia = !g_optIgnoreVia;
                 syncMenuOptionCheckmarks();
                 scheduleAutoRefresh(true);
-                break;
-            case IDM_OPT_DEBUG:
-                g_optDebugImage = !g_optDebugImage;
-                syncMenuOptionCheckmarks();
                 break;
             case IDM_OPT_SPINDLE:
                 g_optEngraverSpindle = !g_optEngraverSpindle;

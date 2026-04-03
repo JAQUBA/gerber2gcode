@@ -5,7 +5,6 @@
 #include "Geometry/Geometry.h"
 #include "Toolpath/Toolpath.h"
 #include "GCode/GCodeGen.h"
-#include "Debug/DebugImage.h"
 
 #include <windows.h>
 #include <Util/StringUtils.h>
@@ -450,13 +449,6 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
             else
                 _snprintf(buf, sizeof(buf), "Estimated job time: %dm %ds", mins, secs);
             log(buf);
-        }
-
-        // Debug image
-        if (!params.debugPath.empty()) {
-            log("Generating debug image...");
-            generateDebugBMP(params.outputPath, params.debugPath, config, allHoles);
-            log("Saved " + baseName(params.debugPath));
         }
 
         if (resultOut)

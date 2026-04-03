@@ -17,7 +17,7 @@ void init() {
 }
 
 void setup() {
-    g_window = new SimpleWindow(1200, 860, "gerber2gcode", 0);
+    g_window = new SimpleWindow(1200, 860, "gerber2gcode", 101);
     g_window->init();
     g_window->setBackgroundColor(RGB(34, 37, 46));
     g_window->setTextColor(RGB(226, 230, 239));

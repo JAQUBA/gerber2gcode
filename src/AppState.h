@@ -45,7 +45,6 @@ struct ToolPreset {
     double yOffset          = 0.0;      // board Y offset [mm]
     bool   flip             = false;    // mirror board
     bool   ignoreVia        = false;    // skip via holes
-    bool   debugImage       = true;     // emit debug BMP
     bool   engraverSpindle  = false;    // M3 before isolation (motorized engraver)
     double drillDwell       = 0.0;      // dwell at drill bottom (seconds, 0=off)
     ToolPresetKind kind     = ToolPresetKind::Isolation;
@@ -98,7 +97,6 @@ extern InputField*    g_fldDrillFeed;
 // Checkboxes
 extern CheckBox*      g_chkFlip;
 extern CheckBox*      g_chkIgnoreVia;
-extern CheckBox*      g_chkDebug;
 extern CheckBox*      g_chkEngraverSpindle;
 extern CheckBox*      g_chkUseArcs;
 
@@ -112,7 +110,7 @@ extern Button*        g_btnGenerate;
 // Pipeline intermediate data (for canvas preview)
 extern PipelineResult g_pipelineData;
 extern volatile bool  g_isRunning;
-extern std::string    g_lastDebugPath;
+extern std::string    g_lastKicadDir;
 
 // Layer panel
 extern HWND           g_hLayerPanel;
@@ -120,7 +118,6 @@ extern HWND           g_hLayerPanel;
 // Option flags (formerly checkboxes — now controlled via Options menu)
 extern bool  g_optFlip;
 extern bool  g_optIgnoreVia;
-extern bool  g_optDebugImage;
 extern bool  g_optEngraverSpindle;
 
 // Menu bar handle (for CheckMenuItem sync)
@@ -138,7 +135,6 @@ extern HMENU g_hMenuBar;
 #define IDM_VIEW_FOCUS    9015
 #define IDM_OPT_FLIP      9020
 #define IDM_OPT_NOVIAS    9021
-#define IDM_OPT_DEBUG     9022
 #define IDM_OPT_SPINDLE   9023
 #define IDM_TOOLS_MANAGE  9030
 #define IDM_HELP_ABOUT    9040
