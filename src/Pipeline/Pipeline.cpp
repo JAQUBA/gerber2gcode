@@ -449,6 +449,38 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
         std::vector<ToolpathContour> gContours = params.generateIsolation ? contours : std::vector<ToolpathContour>{};
         std::vector<geo::Point> gCutout = params.generateCutout ? result.cutoutPath : std::vector<geo::Point>{};
 
+        // ── Auto-correct offset to prevent negative machine coordinates ──────────
+        {
+            double minAllX = 0.0, minAllY = 0.0;
+            for (auto& c : gContours)
+                for (auto& pt : c.points) {
+                    minAllX = std::min(minAllX, pt.x);
+                    minAllY = std::min(minAllY, pt.y);
+                }
+            for (auto& h : allHoles) {
+                minAllX = std::min(minAllX, h.x);
+                minAllY = std::min(minAllY, h.y);
+            }
+            for (auto& pt : gCutout) {
+                minAllX = std::min(minAllX, pt.x);
+                minAllY = std::min(minAllY, pt.y);
+            }
+            if (minAllX + xOff < 0.0) {
+                double prev = xOff;
+                xOff = std::ceil(-minAllX * 1000.0) / 1000.0; // round up to nearest 0.001mm
+                char buf[128];
+                _snprintf(buf, sizeof(buf), "Auto X offset: %.3f→%.3fmm (negative coord prevention)", prev, xOff);
+                log(buf);
+            }
+            if (minAllY + yOff < 0.0) {
+                double prev = yOff;
+                yOff = std::ceil(-minAllY * 1000.0) / 1000.0;
+                char buf[128];
+                _snprintf(buf, sizeof(buf), "Auto Y offset: %.3f→%.3fmm (negative coord prevention)", prev, yOff);
+                log(buf);
+            }
+        }
+
         std::string gcode = generateGCode(gContours, allHoles, gCutout, config, xOff, yOff);
         result.gcode = gcode;
         result.valid = true;
