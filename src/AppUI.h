@@ -4,10 +4,10 @@
 #include <UI/SimpleWindow/SimpleWindow.h>
 
 // Layout constants
-static const int TOOLBAR_HEIGHT  = 128;
-static const int LAYER_PANEL_W   = 240;
+static const int TOOLBAR_HEIGHT  = 80;
+static const int LAYER_PANEL_W   = 290;
 static const int STATUS_BAR_H    = 20;
-static const int LOG_AREA_H      = 128;
+static const int LOG_AREA_H      = 112;
 
 // UI creation
 void createUI(SimpleWindow* window);

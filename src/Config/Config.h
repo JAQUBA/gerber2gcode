@@ -32,11 +32,6 @@ struct CamConfig {
     double offset;
 };
 
-enum class PostProfile {
-    Mach3 = 0,
-    FluidNC = 1
-};
-
 struct JobConfig {
     double engraver_feedrate;       // cutting feedrate (mm/min)
     double engraver_plunge_feedrate = 100.0;
@@ -45,7 +40,6 @@ struct JobConfig {
     double spindle_feedrate;        // spindle feedrate for drilling/cutout (mm/min)
     double drill_dwell = 0.0;      // dwell at drill bottom (seconds, 0 = disabled)
     bool   use_arcs = true;         // G2/G3 arc fitting (convert G1 sequences to arcs)
-    PostProfile postProfile = PostProfile::Mach3;
     // Laser (reserved for future use)
     double laser_power = 0;
     double laser_feedrate = 0;

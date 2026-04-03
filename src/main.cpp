@@ -17,7 +17,7 @@ void init() {
 }
 
 void setup() {
-    g_window = new SimpleWindow(1200, 760, "gerber2gcode", 0);
+    g_window = new SimpleWindow(1200, 860, "gerber2gcode", 0);
     g_window->init();
     g_window->setBackgroundColor(RGB(34, 37, 46));
     g_window->setTextColor(RGB(226, 230, 239));
@@ -36,7 +36,8 @@ void setup() {
     logMsg("1. Click 'Open KiCad' or enter directory path");
     logMsg("2. Select tool preset (auto-configures all job options)");
     logMsg("3. Set laminate thickness only (Mat)");
-    logMsg("4. Click Generate");
+    logMsg("4. Use quick actions: Reload, Fit, Reset, Grid, All On, Focus");
+    logMsg("5. Click Generate (shortcut: Ctrl+G)");
     logMsg("");
 
     // Auto-load project if saved KiCad dir exists

@@ -99,7 +99,6 @@ extern InputField*    g_fldDrillFeed;
 extern CheckBox*      g_chkFlip;
 extern CheckBox*      g_chkIgnoreVia;
 extern CheckBox*      g_chkDebug;
-extern CheckBox*      g_chkFluidNC;
 extern CheckBox*      g_chkEngraverSpindle;
 extern CheckBox*      g_chkUseArcs;
 
@@ -117,6 +116,32 @@ extern std::string    g_lastDebugPath;
 
 // Layer panel
 extern HWND           g_hLayerPanel;
+
+// Option flags (formerly checkboxes — now controlled via Options menu)
+extern bool  g_optFlip;
+extern bool  g_optIgnoreVia;
+extern bool  g_optDebugImage;
+extern bool  g_optEngraverSpindle;
+
+// Menu bar handle (for CheckMenuItem sync)
+extern HMENU g_hMenuBar;
+
+// Menu command IDs (9000+ range — no collision with auto-assigned control IDs 1000-8999)
+#define IDM_FILE_OPEN     9001
+#define IDM_FILE_SAVEAS   9002
+#define IDM_FILE_EXIT     9003
+#define IDM_VIEW_RELOAD   9010
+#define IDM_VIEW_FIT      9011
+#define IDM_VIEW_RESET    9012
+#define IDM_VIEW_GRID     9013
+#define IDM_VIEW_ALLON    9014
+#define IDM_VIEW_FOCUS    9015
+#define IDM_OPT_FLIP      9020
+#define IDM_OPT_NOVIAS    9021
+#define IDM_OPT_DEBUG     9022
+#define IDM_OPT_SPINDLE   9023
+#define IDM_TOOLS_MANAGE  9030
+#define IDM_HELP_ABOUT    9040
 
 // ════════════════════════════════════════════════════════════════════════════
 // Functions
@@ -156,6 +181,9 @@ Config buildConfigFromGUI();
 
 // Layer panel
 void rebuildLayerPanel();
+
+// Menu option checkmarks sync
+void syncMenuOptionCheckmarks();
 
 // Resize
 void installResizeHandler();

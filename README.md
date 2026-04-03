@@ -9,7 +9,7 @@
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010+-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build: PlatformIO](https://img.shields.io/badge/Build-PlatformIO-orange.svg)](https://platformio.org/)
 
-Native Windows desktop application for converting KiCad Gerber (RS-274X) and Excellon drill files to Mach3/FluidNC-compatible G-Code for CNC PCB isolation routing and drilling.
+Native Windows desktop application for converting KiCad Gerber (RS-274X) and Excellon drill files to FluidNC-compatible G-Code for CNC PCB isolation routing and drilling.
 
 </div>
 
@@ -23,10 +23,12 @@ Native Windows desktop application for converting KiCad Gerber (RS-274X) and Exc
 - **Real-time GDI preview** — zoomable/pannable canvas with 13 layer types: board outline, copper (top/bottom), mask, silkscreen, paste, clearance, isolation paths, and drill holes
 - **Layer visibility panel** — toggle individual layers on/off for focused inspection
 - **Polished dark workstation UI** — high-contrast themed numeric fields, wider layer panel with improved readability, and refined spacing/typography for long CAM sessions
+- **Quick action strip** — one-click `Reload`, `Fit`, `Reset`, `Grid`, `All On`, and `Focus` actions for faster preview iteration
+- **Keyboard shortcuts** — `Ctrl+O` open KiCad folder, `Ctrl+G` generate, `Ctrl+R` reload, `Ctrl+L` clear log, `F5` reload, `F6` fit, `F7` grid toggle
 - **Tool presets** — save/load grouped V-bit, combo, drill, and cutout presets with one-click switching, including common PCB sizes such as 30 deg V-bits, 1/64in and 1/32in end mills, 1/16in cutout mills, and micro-drills from 0.30 mm upward
 - **Selective generation** — independent checkboxes for Isolation, Drilling, and Cutout
 - **2-opt TSP path optimization** — nearest-neighbor + 2-opt local improvement for both isolation contours and drill hole ordering, minimizing rapid travel
-- **Mach3/FluidNC-compatible G-Code** — clean G0/G1 output with time estimation and optional machine bounds checking
+- **FluidNC-compatible G-Code** — clean G0/G1 output with time estimation and optional machine bounds checking
 - **Debug BMP export** — re-parses generated G-Code and renders a bitmap for visual verification
 - **KiCad auto-detection** — point at a KiCad fabrication output folder and all layers are detected automatically by filename suffix
 
@@ -68,8 +70,8 @@ The output binary `gerber2gcode.exe` is placed in `.pio/build/windows_x86/`.
 1. **Open KiCad directory** — click "Open KiCad..." and select a folder with Gerber (`.gbr`) and drill (`.drl`) files. Layers are detected automatically by KiCad naming convention.
 2. **Select tool preset** — pick a machining preset from the dropdown. The app automatically applies matching generation mode (Isolation / Combo / Drill / Cutout), feed/depth tool values, overlap/offset defaults, and resets position toggles.
 3. **Set laminate thickness** — adjust only the `Mat` field for your board. Other machining fields (feeds/depths/offsets/drill/cutout toggles) are auto-managed and locked to prevent accidental mismatch.
-4. **Choose post profile** — enable `FluidNC` checkbox for FluidNC-oriented preamble/footer (`M2` end), leave unchecked for Mach3-oriented output (`M30` end).
-5. **Generate** — click "Generate" to compute toolpaths (runs in background thread)
+4. **Use quick actions** — `Reload` to re-parse, `Fit` to frame board, `Reset` to default view, `Grid` to toggle grid, `All On` to reveal all layers, `Focus` for copper-centric inspection
+5. **Generate** — click "Generate" (or `Ctrl+G`) to compute toolpaths (runs in background thread)
 6. **Preview** — inspect the result in the canvas (scroll to zoom, drag to pan, double-click to reset)
 7. **Export G-Code** — click "Export GCode" to save the `.gcode` file
 
@@ -92,7 +94,7 @@ The application auto-detects layers by filename suffix:
 28 default presets are created on first run.
 
 - Presets are grouped by task type: Isolation, Combo (Isolation + Drill), Drilling, and Cutout.
-- Default feed values are tuned as conservative starting points for Mach3/FluidNC CNC workflows.
+- Default feed values are tuned as conservative starting points for FluidNC CNC workflows.
 - V-bits for fine isolation: 20 deg, 30 deg, 45 deg, and 60 deg, including common 0.003in and 0.005in PCB engraving tips.
 - Flat end mills for milling and contour work: 1/64in, 1/32in, 1/16in cutout mill, and 1/8in.
 - Micro-drills from 0.30 mm to 3.20 mm.
@@ -141,14 +143,14 @@ KiCad fabrication folder
   ├─ generateToolpath()         contour-parallel inward offset
   ├─ orderContours()            nearest-neighbor + 2-opt TSP
   ├─ orderDrillHoles()          nearest-neighbor + 2-opt TSP
-  ├─ generateGCode()            Mach3/FluidNC-compatible G0/G1
+  ├─ generateGCode()            FluidNC-compatible G0/G1
   │
   └─ generateDebugBMP()         optional visual verification
 ```
 
 ## G-Code Output
 
-Mach3/FluidNC-compatible format with explicit modal reset preamble and safe spindle sequencing for drilling/cutout sections:
+FluidNC-compatible format with explicit modal reset preamble and safe spindle sequencing for drilling/cutout sections:
 
 ```gcode
 ; gerber2gcode — CNC PCB isolation engraving
@@ -161,7 +163,7 @@ G40 ; cancel cutter compensation
 G49 ; cancel tool length offset
 G80 ; cancel canned cycles
 M5 ; spindle off
-; post profile: Mach3
+; post profile: FluidNC
 G0 Z6.500 ; initial safe Z
 
 ; === Engraver: isolation milling ===
@@ -183,10 +185,10 @@ G0 Z6.500
 G0 Z6.500
 G0 X0 Y0
 M5 ; spindle off
-M30 ; program end
+M2 ; program end
 ```
 
-When `FluidNC` profile is selected, generator emits a FluidNC-oriented footer:
+Generator always emits a FluidNC-oriented footer:
 
 ```gcode
 M5 ; spindle off
@@ -200,9 +202,7 @@ The application persists settings across sessions in two INI files (created auto
 - **`gerber2gcode.ini`** — last used paths, engraver/drill parameters, overlap/offset, checkboxes
 - **`tools.ini`** — saved tool presets with engraver/spindle values, feeds, overlap/offset, and preset-specific position/filter defaults (X/Y, Flip, No Vias, Debug)
 
-`gerber2gcode.ini` additionally stores:
-
-- `post_profile` — `mach3` or `fluidnc`
+`gerber2gcode.ini` stores machining and workflow state used by the FluidNC output pipeline.
 
 ## Contributing
 

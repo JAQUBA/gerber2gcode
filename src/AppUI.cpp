@@ -21,41 +21,42 @@
 #include <shlobj.h>
 #include <commdlg.h>
 #include <functional>
+#include <cstring>
 
 // ════════════════════════════════════════════════════════════════════════════
 // Theme colors
 // ════════════════════════════════════════════════════════════════════════════
 
-static const COLORREF CLR_BG            = RGB(34, 37, 46);
-static const COLORREF CLR_TEXT          = RGB(226, 230, 239);
-static const COLORREF CLR_LABEL         = RGB(159, 168, 189);
-static const COLORREF CLR_SECTION       = RGB(108, 194, 255);
+static const COLORREF CLR_BG            = RGB(27, 31, 40);
+static const COLORREF CLR_TEXT          = RGB(231, 236, 245);
+static const COLORREF CLR_LABEL         = RGB(174, 184, 206);
+static const COLORREF CLR_SECTION       = RGB(111, 218, 235);
 
-static const COLORREF CLR_BTN_BG        = RGB(63, 68, 84);
-static const COLORREF CLR_BTN_TEXT      = RGB(221, 226, 239);
-static const COLORREF CLR_BTN_HOVER     = RGB(80, 86, 106);
+static const COLORREF CLR_BTN_BG        = RGB(66, 74, 95);
+static const COLORREF CLR_BTN_TEXT      = RGB(230, 236, 248);
+static const COLORREF CLR_BTN_HOVER     = RGB(84, 94, 120);
 
-static const COLORREF CLR_ACTION_BG     = RGB(9, 147, 101);
-static const COLORREF CLR_ACTION_TEXT   = RGB(240, 255, 248);
-static const COLORREF CLR_ACTION_HOVER  = RGB(14, 176, 121);
+static const COLORREF CLR_ACTION_BG     = RGB(0, 147, 117);
+static const COLORREF CLR_ACTION_TEXT   = RGB(236, 255, 250);
+static const COLORREF CLR_ACTION_HOVER  = RGB(0, 172, 136);
 
-static const COLORREF CLR_TOOL_BG       = RGB(57, 102, 173);
-static const COLORREF CLR_TOOL_TEXT     = RGB(225, 238, 255);
-static const COLORREF CLR_TOOL_HOVER    = RGB(72, 120, 198);
+static const COLORREF CLR_TOOL_BG       = RGB(37, 107, 184);
+static const COLORREF CLR_TOOL_TEXT     = RGB(231, 241, 255);
+static const COLORREF CLR_TOOL_HOVER    = RGB(52, 124, 203);
 
-static const COLORREF CLR_EXPORT_BG     = RGB(197, 127, 33);
-static const COLORREF CLR_EXPORT_TEXT   = RGB(255, 248, 236);
-static const COLORREF CLR_EXPORT_HOVER  = RGB(222, 150, 53);
+static const COLORREF CLR_EXPORT_BG     = RGB(214, 132, 31);
+static const COLORREF CLR_EXPORT_TEXT   = RGB(255, 250, 239);
+static const COLORREF CLR_EXPORT_HOVER  = RGB(232, 151, 52);
 
-static const COLORREF CLR_FIELD_BG      = RGB(26, 30, 40);
-static const COLORREF CLR_FIELD_TEXT    = RGB(230, 233, 242);
-static const COLORREF CLR_LIST_BG       = RGB(26, 30, 40);
-static const COLORREF CLR_LIST_TEXT     = RGB(220, 224, 236);
-static const COLORREF CLR_LOG_BG        = RGB(20, 24, 33);
-static const COLORREF CLR_LOG_TEXT      = RGB(181, 201, 220);
+static const COLORREF CLR_FIELD_BG      = RGB(19, 23, 31);
+static const COLORREF CLR_FIELD_TEXT    = RGB(236, 241, 250);
+static const COLORREF CLR_LIST_BG       = RGB(20, 24, 33);
+static const COLORREF CLR_LIST_TEXT     = RGB(225, 230, 243);
+static const COLORREF CLR_LOG_BG        = RGB(17, 20, 28);
+static const COLORREF CLR_LOG_TEXT      = RGB(187, 206, 229);
 
-static const COLORREF CLR_PROGRESS      = RGB(0, 198, 118);
-static const COLORREF CLR_PROGRESS_BG   = RGB(50, 58, 78);
+static const COLORREF CLR_PROGRESS      = RGB(38, 205, 130);
+static const COLORREF CLR_PROGRESS_BG   = RGB(53, 62, 85);
 
 static HBRUSH g_brField = NULL;
 static HBRUSH g_brList  = NULL;
@@ -120,11 +121,7 @@ static Label* addSectionLabel(SimpleWindow* win, int x, int y, int w, const wcha
 }
 
 static bool isThemedEdit(HWND hCtrl) {
-    InputField* fields[] = {
-        g_fldKicadDir, g_fldOutputFile, g_fldToolDia, g_fldCutDepth, g_fldSafeHeight,
-        g_fldFeedXY, g_fldFeedZ, g_fldOverlap, g_fldOffset, g_fldXOffset,
-        g_fldYOffset, g_fldMaterial, g_fldZDrill, g_fldDrillDia, g_fldDrillFeed
-    };
+    InputField* fields[] = { g_fldKicadDir, g_fldOutputFile, g_fldMaterial };
     for (InputField* f : fields) {
         if (f && f->getHandle() == hCtrl) return true;
     }
@@ -176,6 +173,169 @@ static std::string saveFileDialogUTF8(HWND owner,
 
 static const int LP_ID = 9500;
 
+static void doOpenKicadFolder() {
+    auto p = browseFolderUTF8(g_window->getHandle(),
+        L"Select KiCad Gerber directory");
+    if (!p.empty() && g_fldKicadDir) {
+        g_fldKicadDir->setText(p.c_str());
+        doLoadKicadDir();
+    }
+}
+
+static void doReloadProject() {
+    if (!g_fldKicadDir) return;
+    std::string dir = g_fldKicadDir->getText();
+    if (dir.empty()) {
+        doOpenKicadFolder();
+        return;
+    }
+    doLoadKicadDir();
+}
+
+static void doFitCanvasToBoard() {
+    if (!g_canvas || !g_pipelineData.valid) return;
+    g_canvas->zoomToFit(g_pipelineData.boardW, g_pipelineData.boardH);
+}
+
+static void doResetCanvasView() {
+    if (!g_canvas) return;
+    g_canvas->resetView();
+    g_canvas->redraw();
+}
+
+static void doToggleGrid() {
+    if (!g_canvas) return;
+    bool visible = !g_canvas->isGridVisible();
+    g_canvas->setGridVisible(visible);
+    g_canvas->redraw();
+    logMsg(visible ? "Grid enabled" : "Grid disabled");
+}
+
+static void setDrillFiltersVisible(std::vector<DrillFilter>& filters, bool visible) {
+    for (auto& f : filters)
+        f.visible = visible;
+}
+
+static void setAllLayersVisible(bool visible) {
+    if (!g_canvas) return;
+
+    auto& lay = g_canvas->layers();
+    auto& pres = g_canvas->presence();
+    bool copperFilterChanged = false;
+
+    auto setIfPresent = [&](bool present, bool& flag) {
+        if (!present) return;
+        flag = visible;
+    };
+
+    setIfPresent(pres.outline, lay.outline);
+    setIfPresent(pres.copperTop, lay.copperTop);
+    setIfPresent(pres.copperBottom, lay.copperBottom);
+    setIfPresent(pres.maskTop, lay.maskTop);
+    setIfPresent(pres.maskBottom, lay.maskBottom);
+    setIfPresent(pres.silkTop, lay.silkTop);
+    setIfPresent(pres.silkBottom, lay.silkBottom);
+    setIfPresent(pres.pasteTop, lay.pasteTop);
+    setIfPresent(pres.pasteBottom, lay.pasteBottom);
+    setIfPresent(pres.drillsPTH, lay.drillsPTH);
+    setIfPresent(pres.drillsNPTH, lay.drillsNPTH);
+    setIfPresent(pres.clearance, lay.clearance);
+    setIfPresent(pres.isolation, lay.isolation);
+    setIfPresent(pres.cutout, lay.cutout);
+
+    if (pres.copperTopSub.traces) lay.copperTopSub.traces = visible;
+    if (pres.copperTopSub.pads)   lay.copperTopSub.pads = visible;
+    if (pres.copperTopSub.regions)lay.copperTopSub.regions = visible;
+    if (pres.copperBottomSub.traces) lay.copperBottomSub.traces = visible;
+    if (pres.copperBottomSub.pads)   lay.copperBottomSub.pads = visible;
+    if (pres.copperBottomSub.regions)lay.copperBottomSub.regions = visible;
+
+    auto* pgTop = g_canvas->copperTopPadGroups();
+    auto* pgBot = g_canvas->copperBottomPadGroups();
+    if (pgTop) {
+        for (auto& pg : *pgTop) {
+            if (pg.visible != visible) {
+                pg.visible = visible;
+                copperFilterChanged = true;
+            }
+        }
+    }
+    if (pgBot) {
+        for (auto& pg : *pgBot) {
+            if (pg.visible != visible) {
+                pg.visible = visible;
+                copperFilterChanged = true;
+            }
+        }
+    }
+
+    setDrillFiltersVisible(g_canvas->drillFilterPTH(), visible);
+    setDrillFiltersVisible(g_canvas->drillFilterNPTH(), visible);
+
+    if (copperFilterChanged)
+        doRecomputeClearance();
+    else {
+        rebuildLayerPanel();
+        g_canvas->redraw();
+    }
+}
+
+static void applyCopperFocusPreset() {
+    if (!g_canvas) return;
+
+    auto& lay = g_canvas->layers();
+    auto& pres = g_canvas->presence();
+    bool copperFilterChanged = false;
+
+    if (pres.outline) lay.outline = true;
+    if (pres.copperTop) lay.copperTop = true;
+    if (pres.copperBottom) lay.copperBottom = true;
+
+    if (pres.maskTop) lay.maskTop = false;
+    if (pres.maskBottom) lay.maskBottom = false;
+    if (pres.silkTop) lay.silkTop = false;
+    if (pres.silkBottom) lay.silkBottom = false;
+    if (pres.pasteTop) lay.pasteTop = false;
+    if (pres.pasteBottom) lay.pasteBottom = false;
+    if (pres.drillsPTH) lay.drillsPTH = false;
+    if (pres.drillsNPTH) lay.drillsNPTH = false;
+    if (pres.clearance) lay.clearance = false;
+    if (pres.isolation) lay.isolation = true;
+
+    if (pres.copperTopSub.traces) lay.copperTopSub.traces = true;
+    if (pres.copperTopSub.pads)   lay.copperTopSub.pads = true;
+    if (pres.copperTopSub.regions)lay.copperTopSub.regions = true;
+    if (pres.copperBottomSub.traces) lay.copperBottomSub.traces = true;
+    if (pres.copperBottomSub.pads)   lay.copperBottomSub.pads = true;
+    if (pres.copperBottomSub.regions)lay.copperBottomSub.regions = true;
+
+    auto* pgTop = g_canvas->copperTopPadGroups();
+    auto* pgBot = g_canvas->copperBottomPadGroups();
+    if (pgTop) {
+        for (auto& pg : *pgTop) {
+            if (!pg.visible) {
+                pg.visible = true;
+                copperFilterChanged = true;
+            }
+        }
+    }
+    if (pgBot) {
+        for (auto& pg : *pgBot) {
+            if (!pg.visible) {
+                pg.visible = true;
+                copperFilterChanged = true;
+            }
+        }
+    }
+
+    if (copperFilterChanged)
+        doRecomputeClearance();
+    else {
+        rebuildLayerPanel();
+        g_canvas->redraw();
+    }
+}
+
 static void createLayerPanel(HWND parent, int x, int y, int w, int h) {
     g_hLayerPanel = CreateWindowExW(0, L"LISTBOX", NULL,
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT,
@@ -194,6 +354,29 @@ static void createLayerPanel(HWND parent, int x, int y, int w, int h) {
 
 static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
                                     LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_GETMINMAXINFO) {
+        MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+        mmi->ptMinTrackSize.x = 1100;
+        mmi->ptMinTrackSize.y = 640;
+        return 0;
+    }
+
+    if (msg == WM_KEYDOWN) {
+        const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+
+        if (ctrl && wParam == 'O') { doOpenKicadFolder(); return 0; }
+        if (ctrl && wParam == 'G') { doGenerate(); return 0; }
+        if (ctrl && wParam == 'R') { doReloadProject(); return 0; }
+        if (ctrl && wParam == 'L') {
+            if (g_logArea) g_logArea->clear();
+            return 0;
+        }
+
+        if (wParam == VK_F5) { doReloadProject(); return 0; }
+        if (wParam == VK_F6) { doFitCanvasToBoard(); return 0; }
+        if (wParam == VK_F7) { doToggleGrid(); return 0; }
+    }
+
     if (msg == WM_CTLCOLOREDIT) {
         HDC hdc = (HDC)wParam;
         HWND hCtrl = (HWND)lParam;
@@ -312,171 +495,68 @@ void doResize(int w, int h) {
 
 void createUI(SimpleWindow* win) {
     const int m = 10;
-    const int rowH = 26;
-    const int rowGap = 8;
+    const int rowH = 28;
+
+    // ── Row 1: Primary actions + quick workflow ──────────────────────────
     int y = 8;
 
-    // Callbacks for auto-refresh on parameter change
-    auto onIsoParam = [](InputField*, const char*) { scheduleAutoRefresh(false); };
-    auto onPosParam = [](InputField*, const char*) { scheduleAutoRefresh(true); };
-
-    // Section labels
-    addSectionLabel(win, m, y, 180, L"PROJECT");
-    addSectionLabel(win, m + 370, y, 240, L"MACHINING");
-    addSectionLabel(win, m + 930, y, 220, L"POSITION / FILTERS");
-
-    y += 16;
-
-    // ── Row 1: File actions + tool selector + key engraver fields ────────
-    styleBtn(win, new Button(m, y, 130, rowH, "Open KiCad...",
-        [](Button*) {
-            auto p = browseFolderUTF8(g_window->getHandle(),
-                L"Select KiCad Gerber directory");
-            if (!p.empty()) {
-                g_fldKicadDir->setText(p.c_str());
-                doLoadKicadDir();
-            }
-        }),
+    styleBtn(win, new Button(m, y, 110, rowH, "Open KiCad",
+        [](Button*) { doOpenKicadFolder(); }),
         CLR_ACTION_BG, CLR_ACTION_TEXT, CLR_ACTION_HOVER);
 
-    // Tool preset dropdown
-    g_btnTool = new Button(m + 138, y, 220, rowH, "Tool",
+    g_btnTool = new Button(m + 118, y, 268, rowH, "Tool",
         [](Button*) { showToolPopup(); });
     styleBtn(win, g_btnTool, CLR_TOOL_BG, CLR_TOOL_TEXT, CLR_TOOL_HOVER);
     updateToolButtonText();
 
-    // Main action
-    g_btnGenerate = new Button(m + 366, y, 120, rowH, "Generate",
+    addLabel(win, m + 394, y + 6, 32, L"Mat:", 10, true);
+    g_fldMaterial = addField(win, m + 428, y + 2, 62, "1.5");
+
+    g_chkUseArcs = new CheckBox(m + 498, y + 3, 70, 24, "Arcs", true);
+    win->add(g_chkUseArcs);
+    styleCheck(g_chkUseArcs);
+
+    g_btnGenerate = new Button(m + 576, y, 140, rowH, "Generate GCode",
         [](Button*) { doGenerate(); });
     styleBtn(win, g_btnGenerate, CLR_EXPORT_BG, CLR_EXPORT_TEXT, CLR_EXPORT_HOVER);
     g_btnGenerate->setFont(L"Segoe UI", 11, true);
 
-    // Key fields — tool dia triggers isolation refresh
-    int fx = m + 498;
-    addLabel(win, fx, y + 3, 28, L"Tip:");
-    g_fldToolDia = addField(win, fx + 30, y, 54, "0.1", onIsoParam);
+    int qx = m + 726;
+    const int qGap = 6;
+    styleBtn(win, new Button(qx, y, 78, rowH, "Reload", [](Button*) { doReloadProject(); }),
+        CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
+    qx += 78 + qGap;
+    styleBtn(win, new Button(qx, y, 58, rowH, "Fit", [](Button*) { doFitCanvasToBoard(); }),
+        CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
+    qx += 58 + qGap;
+    styleBtn(win, new Button(qx, y, 58, rowH, "Reset", [](Button*) { doResetCanvasView(); }),
+        CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
+    qx += 58 + qGap;
+    styleBtn(win, new Button(qx, y, 58, rowH, "Grid", [](Button*) { doToggleGrid(); }),
+        CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
+    qx += 58 + qGap;
+    styleBtn(win, new Button(qx, y, 70, rowH, "All On", [](Button*) { setAllLayersVisible(true); }),
+        CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
+    qx += 70 + qGap;
+    styleBtn(win, new Button(qx, y, 70, rowH, "Focus", [](Button*) { applyCopperFocusPreset(); }),
+        CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
 
-    fx += 90;
-    addLabel(win, fx, y + 3, 42, L"Z Cut:");
-    g_fldCutDepth = addField(win, fx + 44, y, 54, "0.05");
+    // ── Row 2: Paths and I/O ─────────────────────────────────────────────
+    y = 44;
 
-    fx += 106;
-    addLabel(win, fx, y + 3, 44, L"Z Safe:");
-    g_fldSafeHeight = addField(win, fx + 46, y, 54, "5");
-
-    fx += 108;
-    addLabel(win, fx, y + 3, 38, L"Feed:");
-    g_fldFeedXY = addField(win, fx + 40, y, 58, "300");
-
-    fx += 104;
-    addLabel(win, fx, y + 3, 40, L"Plunge:");
-    g_fldFeedZ = addField(win, fx + 42, y, 58, "100");
-
-    fx += 104;
-    addLabel(win, fx, y + 3, 30, L"Mat:");
-    g_fldMaterial = addField(win, fx + 32, y, 52, "1.5");
-
-    // ── Row 2: CAM + drill/spindle + machine options ─────────
-    y += rowH + rowGap;
-
-    addLabel(win, m, y + 3, 56, L"Overlap:");
-    g_fldOverlap = addField(win, m + 58, y, 58, "0.4", onIsoParam);
-
-    addLabel(win, m + 126, y + 3, 48, L"Offset:");
-    g_fldOffset = addField(win, m + 176, y, 58, "0.02", onIsoParam);
-
-    addLabel(win, m + 248, y + 3, 52, L"Z Drill:");
-    g_fldZDrill = addField(win, m + 302, y, 58, "2");
-
-    addLabel(win, m + 374, y + 3, 48, L"Sp Dia:");
-    g_fldDrillDia = addField(win, m + 424, y, 58, "0.8");
-
-    addLabel(win, m + 496, y + 3, 56, L"Sp Feed:");
-    g_fldDrillFeed = addField(win, m + 554, y, 58, "60");
-
-    addLabel(win, m + 630, y + 3, 36, L"X Off:");
-    g_fldXOffset = addField(win, m + 668, y, 50, "0", onPosParam);
-
-    addLabel(win, m + 724, y + 3, 36, L"Y Off:");
-    g_fldYOffset = addField(win, m + 762, y, 50, "0", onPosParam);
-
-    g_chkFlip = new CheckBox(m + 826, y + 1, 64, 24, "Flip", false,
-        [](CheckBox*, bool) { scheduleAutoRefresh(true); });
-    win->add(g_chkFlip);
-    styleCheck(g_chkFlip);
-
-    g_chkIgnoreVia = new CheckBox(m + 896, y + 1, 92, 24, "No Vias", false,
-        [](CheckBox*, bool) { scheduleAutoRefresh(true); });
-    win->add(g_chkIgnoreVia);
-    styleCheck(g_chkIgnoreVia);
-
-    g_chkDebug = new CheckBox(m + 996, y + 1, 76, 24, "Debug", true);
-    win->add(g_chkDebug);
-    styleCheck(g_chkDebug);
-
-    g_chkFluidNC = new CheckBox(m + 1078, y + 1, 94, 24, "FluidNC", false);
-    win->add(g_chkFluidNC);
-    styleCheck(g_chkFluidNC);
-
-    g_chkEngraverSpindle = new CheckBox(m + 1178, y + 1, 80, 24, "Eng M3", false);
-    win->add(g_chkEngraverSpindle);
-    styleCheck(g_chkEngraverSpindle);
-
-    addLabel(win, m + 1266, y + 3, 48, L"Dwell:");
-    g_fldDrillDwell = addField(win, m + 1316, y, 48, "0");
-
-    g_chkUseArcs = new CheckBox(m + 1370, y + 1, 68, 24, "Arcs", true);
-    win->add(g_chkUseArcs);
-    styleCheck(g_chkUseArcs);
-
-    // Auto-managed workflow: these options are derived from selected tool preset.
-    // User should mainly provide material thickness (Mat).
-    if (g_fldToolDia)    g_fldToolDia->setReadOnly(true);
-    if (g_fldCutDepth)   g_fldCutDepth->setReadOnly(true);
-    if (g_fldSafeHeight) g_fldSafeHeight->setReadOnly(true);
-    if (g_fldFeedXY)     g_fldFeedXY->setReadOnly(true);
-    if (g_fldFeedZ)      g_fldFeedZ->setReadOnly(true);
-    if (g_fldOverlap)    g_fldOverlap->setReadOnly(true);
-    if (g_fldOffset)     g_fldOffset->setReadOnly(true);
-    if (g_fldZDrill)     g_fldZDrill->setReadOnly(true);
-    if (g_fldDrillDia)   g_fldDrillDia->setReadOnly(true);
-    if (g_fldDrillFeed)  g_fldDrillFeed->setReadOnly(true);
-    if (g_fldXOffset)    g_fldXOffset->setReadOnly(true);
-    if (g_fldYOffset)    g_fldYOffset->setReadOnly(true);
-    if (g_fldDrillDwell) g_fldDrillDwell->setReadOnly(true);
-
-    if (g_chkFlip && g_chkFlip->getHandle())
-        EnableWindow(g_chkFlip->getHandle(), FALSE);
-    if (g_chkIgnoreVia && g_chkIgnoreVia->getHandle())
-        EnableWindow(g_chkIgnoreVia->getHandle(), FALSE);
-    if (g_chkDebug && g_chkDebug->getHandle())
-        EnableWindow(g_chkDebug->getHandle(), FALSE);
-    if (g_chkEngraverSpindle && g_chkEngraverSpindle->getHandle())
-        EnableWindow(g_chkEngraverSpindle->getHandle(), FALSE);
-
-    // ── Row 3: Paths and browse actions ─────────────────────────────────
-    y += rowH + rowGap;
-
-    addLabel(win, m, y + 3, 40, L"KiCad:");
-    g_fldKicadDir = addField(win, m + 42, y, 430, "");
+    addLabel(win, m, y + 5, 42, L"KiCad:", 10, true);
+    g_fldKicadDir = addField(win, m + 44, y, 424, "");
     g_fldKicadDir->setMaxLength(512);
 
-    Button* btnBrowse = new Button(m + 476, y, 30, 24, "...",
-        [](Button*) {
-            auto p = browseFolderUTF8(g_window->getHandle(),
-                L"Select KiCad Gerber directory");
-            if (!p.empty()) {
-                g_fldKicadDir->setText(p.c_str());
-                doLoadKicadDir();
-            }
-        });
+    Button* btnBrowse = new Button(m + 472, y, 28, rowH, "...",
+        [](Button*) { doOpenKicadFolder(); });
     styleBtn(win, btnBrowse, CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
 
-    addLabel(win, m + 516, y + 3, 46, L"Output:");
-    g_fldOutputFile = addField(win, m + 564, y, 500, "");
+    addLabel(win, m + 510, y + 5, 48, L"Output:", 10, true);
+    g_fldOutputFile = addField(win, m + 560, y, 530, "");
     g_fldOutputFile->setMaxLength(512);
 
-    Button* btnBrowseOut = new Button(m + 1068, y, 30, 24, "...",
+    Button* btnBrowseOut = new Button(m + 1094, y, 28, rowH, "...",
         [](Button*) {
             auto p = saveFileDialogUTF8(g_window->getHandle(),
                 L"GCode (*.gcode)\0*.gcode\0All (*.*)\0*.*\0",
@@ -484,6 +564,10 @@ void createUI(SimpleWindow* win) {
             if (!p.empty()) g_fldOutputFile->setText(p.c_str());
         });
     styleBtn(win, btnBrowseOut, CLR_BTN_BG, CLR_BTN_TEXT, CLR_BTN_HOVER);
+
+    addLabel(win, m + 1132, y + 5, 360,
+        L"Ctrl+O  Ctrl+G  Ctrl+R  Ctrl+L  F5  F6  F7",
+        9, false);
 
     // ── Canvas (will be repositioned by doResize) ────────────────────────
 
@@ -522,5 +606,125 @@ void createUI(SimpleWindow* win) {
     // ── Install resize handler & initial layout ──────────────────────────
 
     installResizeHandler();
+
+    // ── Menu bar ─────────────────────────────────────────────────────────
+    {
+        HMENU hFile  = CreatePopupMenu();
+        HMENU hView  = CreatePopupMenu();
+        HMENU hOpts  = CreatePopupMenu();
+        HMENU hTools = CreatePopupMenu();
+        HMENU hHelp  = CreatePopupMenu();
+
+        AppendMenuW(hFile, MF_STRING, IDM_FILE_OPEN,   L"&Open KiCad folder...\tCtrl+O");
+        AppendMenuW(hFile, MF_STRING, IDM_FILE_SAVEAS, L"Set &output GCode file...");
+        AppendMenuW(hFile, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(hFile, MF_STRING, IDM_FILE_EXIT,   L"E&xit");
+
+        AppendMenuW(hView, MF_STRING, IDM_VIEW_RELOAD, L"&Reload project\tF5");
+        AppendMenuW(hView, MF_STRING, IDM_VIEW_FIT,    L"&Fit to board\tF6");
+        AppendMenuW(hView, MF_STRING, IDM_VIEW_RESET,  L"Reset &view");
+        AppendMenuW(hView, MF_STRING, IDM_VIEW_GRID,   L"Toggle &grid\tF7");
+        AppendMenuW(hView, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(hView, MF_STRING, IDM_VIEW_ALLON,  L"All layers &on");
+        AppendMenuW(hView, MF_STRING, IDM_VIEW_FOCUS,  L"&Focus copper");
+
+        AppendMenuW(hOpts, MF_STRING | (g_optFlip            ? MF_CHECKED : 0), IDM_OPT_FLIP,    L"&Flip board (mirror X)");
+        AppendMenuW(hOpts, MF_STRING | (g_optIgnoreVia       ? MF_CHECKED : 0), IDM_OPT_NOVIAS,  L"Ignore &via holes");
+        AppendMenuW(hOpts, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(hOpts, MF_STRING | (g_optDebugImage      ? MF_CHECKED : 0), IDM_OPT_DEBUG,   L"Generate &debug BMP");
+        AppendMenuW(hOpts, MF_STRING | (g_optEngraverSpindle ? MF_CHECKED : 0), IDM_OPT_SPINDLE, L"&Engraver spindle M3");
+
+        AppendMenuW(hTools, MF_STRING, IDM_TOOLS_MANAGE, L"&Manage tools...");
+
+        AppendMenuW(hHelp, MF_STRING, IDM_HELP_ABOUT, L"&About gerber2gcode...");
+
+        HMENU hBar = CreateMenu();
+        AppendMenuW(hBar, MF_POPUP, (UINT_PTR)hFile,  L"&File");
+        AppendMenuW(hBar, MF_POPUP, (UINT_PTR)hView,  L"&View");
+        AppendMenuW(hBar, MF_POPUP, (UINT_PTR)hOpts,  L"&Options");
+        AppendMenuW(hBar, MF_POPUP, (UINT_PTR)hTools, L"&Tools");
+        AppendMenuW(hBar, MF_POPUP, (UINT_PTR)hHelp,  L"&Help");
+
+        g_hMenuBar = hBar;
+        win->setMenu(hBar);
+    }
+
+    win->onMenuCommand([](int cmd) {
+        switch (cmd) {
+            case IDM_FILE_OPEN:
+                doOpenKicadFolder();
+                break;
+            case IDM_FILE_SAVEAS: {
+                auto p = saveFileDialogUTF8(g_window->getHandle(),
+                    L"GCode (*.gcode)\0*.gcode\0All (*.*)\0*.*\0",
+                    L"Save GCode", L"gcode");
+                if (!p.empty() && g_fldOutputFile)
+                    g_fldOutputFile->setText(p.c_str());
+                break;
+            }
+            case IDM_FILE_EXIT:
+                PostMessageW(g_window->getHandle(), WM_CLOSE, 0, 0);
+                break;
+            case IDM_VIEW_RELOAD:  doReloadProject();       break;
+            case IDM_VIEW_FIT:     doFitCanvasToBoard();    break;
+            case IDM_VIEW_RESET:   doResetCanvasView();     break;
+            case IDM_VIEW_GRID:    doToggleGrid();          break;
+            case IDM_VIEW_ALLON:   setAllLayersVisible(true); break;
+            case IDM_VIEW_FOCUS:   applyCopperFocusPreset(); break;
+            case IDM_OPT_FLIP:
+                g_optFlip = !g_optFlip;
+                syncMenuOptionCheckmarks();
+                scheduleAutoRefresh(true);
+                break;
+            case IDM_OPT_NOVIAS:
+                g_optIgnoreVia = !g_optIgnoreVia;
+                syncMenuOptionCheckmarks();
+                scheduleAutoRefresh(true);
+                break;
+            case IDM_OPT_DEBUG:
+                g_optDebugImage = !g_optDebugImage;
+                syncMenuOptionCheckmarks();
+                break;
+            case IDM_OPT_SPINDLE:
+                g_optEngraverSpindle = !g_optEngraverSpindle;
+                syncMenuOptionCheckmarks();
+                break;
+            case IDM_TOOLS_MANAGE:
+                doShowToolPresets();
+                break;
+            case IDM_HELP_ABOUT:
+                MessageBoxW(g_window ? g_window->getHandle() : NULL,
+                    L"gerber2gcode\r\n"
+                    L"CNC PCB Isolation Router\r\n"
+                    L"\r\n"
+                    L"Konwertuje pliki KiCad Gerber (RS-274X) i Excellon\r\n"
+                    L"na G-Code dla frezarek CNC.\r\n"
+                    L"\r\n"
+                    L"Format wyjściowy: FluidNC-compatible G-Code\r\n"
+                    L"\r\n"
+                    L"Skróty klawiszowe:\r\n"
+                    L"  Ctrl+O  — otwórz folder KiCad\r\n"
+                    L"  Ctrl+G  — generuj G-Code\r\n"
+                    L"  Ctrl+R  — przeładuj projekt\r\n"
+                    L"  Ctrl+L  — wyczyść log\r\n"
+                    L"  F5      — przeładuj projekt\r\n"
+                    L"  F6      — dopasuj widok\r\n"
+                    L"  F7      — siatka\r\n"
+                    L"\r\n"
+                    L"Workflow:\r\n"
+                    L"  1. Otwórz folder KiCad (Ctrl+O)\r\n"
+                    L"  2. Wybierz preset narzędzia (▼ Tool)\r\n"
+                    L"  3. Ustaw grubość laminatu (Mat)\r\n"
+                    L"  4. Wygeneruj G-Code (Ctrl+G)\r\n"
+                    L"\r\n"
+                    L"Biblioteki:\r\n"
+                    L"  Clipper2 \u00A9 Angus Johnson\r\n"
+                    L"  JQB_WindowsLib \u00A9 JAQUBA",
+                    L"O programie — gerber2gcode",
+                    MB_OK | MB_ICONINFORMATION);
+                break;
+        }
+    });
+
     doResize(rc.right, rc.bottom);
 }

@@ -55,7 +55,6 @@ InputField*    g_fldDrillFeed  = nullptr;
 CheckBox*      g_chkFlip       = nullptr;
 CheckBox*      g_chkIgnoreVia  = nullptr;
 CheckBox*      g_chkDebug      = nullptr;
-CheckBox*      g_chkFluidNC    = nullptr;
 CheckBox*      g_chkEngraverSpindle = nullptr;
 CheckBox*      g_chkUseArcs    = nullptr;
 
@@ -70,6 +69,13 @@ std::string    g_lastDebugPath;
 
 HWND           g_hLayerPanel   = nullptr;
 std::vector<LayerPanelItem> g_layerItems;
+
+// Option flags (controlled via Options menu, preset-initialised)
+bool  g_optFlip             = false;
+bool  g_optIgnoreVia        = false;
+bool  g_optDebugImage       = true;
+bool  g_optEngraverSpindle  = false;
+HMENU g_hMenuBar            = nullptr;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Auto-refresh debounce
@@ -228,11 +234,25 @@ static void applyPresetManagedValues(const ToolPreset& tp) {
     if (g_chkDebug)     g_chkDebug->setChecked(tp.debugImage);
     if (g_chkEngraverSpindle) g_chkEngraverSpindle->setChecked(tp.engraverSpindle);
     if (g_fldDrillDwell) g_fldDrillDwell->setText(dblStr(tp.drillDwell, 3).c_str());
+    // Update global option flags and sync menu checkmarks
+    g_optFlip             = tp.flip;
+    g_optIgnoreVia        = tp.ignoreVia;
+    g_optDebugImage       = tp.debugImage;
+    g_optEngraverSpindle  = tp.engraverSpindle;
+    syncMenuOptionCheckmarks();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // Logging
 // ════════════════════════════════════════════════════════════════════════════
+
+void syncMenuOptionCheckmarks() {
+    if (!g_hMenuBar) return;
+    CheckMenuItem(g_hMenuBar, IDM_OPT_FLIP,    MF_BYCOMMAND | (g_optFlip            ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(g_hMenuBar, IDM_OPT_NOVIAS,  MF_BYCOMMAND | (g_optIgnoreVia       ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(g_hMenuBar, IDM_OPT_DEBUG,   MF_BYCOMMAND | (g_optDebugImage      ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(g_hMenuBar, IDM_OPT_SPINDLE, MF_BYCOMMAND | (g_optEngraverSpindle ? MF_CHECKED : MF_UNCHECKED));
+}
 
 void logMsg(const std::string& msg) {
     if (g_logArea) g_logArea->append(msg + "\r\n");
@@ -272,10 +292,16 @@ void loadSettings() {
     if (g_chkFlip)       g_chkFlip->setChecked(s.getValue("flip", "0") == "1");
     if (g_chkIgnoreVia)  g_chkIgnoreVia->setChecked(s.getValue("ignore_via", "0") == "1");
     if (g_chkDebug)      g_chkDebug->setChecked(s.getValue("debug_image", "1") == "1");
-    if (g_chkFluidNC)    g_chkFluidNC->setChecked(s.getValue("post_profile", "mach3") == "fluidnc");
     if (g_chkEngraverSpindle) g_chkEngraverSpindle->setChecked(s.getValue("engraver_spindle", "0") == "1");
     if (g_chkUseArcs) g_chkUseArcs->setChecked(s.getValue("use_arcs", "1") == "1");
     if (g_fldDrillDwell) g_fldDrillDwell->setText(s.getValue("drill_dwell", "0").c_str());
+
+    // Load option flags (drive Options menu checkmarks)
+    g_optFlip            = s.getValue("flip",             "0") == "1";
+    g_optIgnoreVia       = s.getValue("ignore_via",       "0") == "1";
+    g_optDebugImage      = s.getValue("debug_image",      "1") == "1";
+    g_optEngraverSpindle = s.getValue("engraver_spindle", "0") == "1";
+    syncMenuOptionCheckmarks();
 
     // Load layer visibility from settings
     if (g_canvas) {
@@ -313,10 +339,14 @@ void saveSettings() {
     if (g_chkFlip)       s.setValue("flip",          g_chkFlip->isChecked() ? "1" : "0");
     if (g_chkIgnoreVia)  s.setValue("ignore_via",    g_chkIgnoreVia->isChecked() ? "1" : "0");
     if (g_chkDebug)      s.setValue("debug_image",   g_chkDebug->isChecked() ? "1" : "0");
-    if (g_chkFluidNC)    s.setValue("post_profile",  g_chkFluidNC->isChecked() ? "fluidnc" : "mach3");
     if (g_chkEngraverSpindle) s.setValue("engraver_spindle", g_chkEngraverSpindle->isChecked() ? "1" : "0");
     if (g_chkUseArcs) s.setValue("use_arcs", g_chkUseArcs->isChecked() ? "1" : "0");
     if (g_fldDrillDwell) s.setValue("drill_dwell",   g_fldDrillDwell->getText());
+    // Save option flags
+    s.setValue("flip",             g_optFlip            ? "1" : "0");
+    s.setValue("ignore_via",       g_optIgnoreVia       ? "1" : "0");
+    s.setValue("debug_image",      g_optDebugImage      ? "1" : "0");
+    s.setValue("engraver_spindle", g_optEngraverSpindle ? "1" : "0");
 
     // Save layer visibility from canvas
     if (g_canvas) {
@@ -362,7 +392,7 @@ void createDefaultToolPresets() {
         g_toolPresets.push_back(tp);
     };
 
-    // Mach3 + FluidNC conservative defaults
+    // Conservative defaults
     // Isolation V-bits
     add(ToolPresetKind::Isolation, "V-bit 10deg 0.05mm",           0.05, 0.03, 5.0, 120.0, 20.0, 2.0, 0.8, 50.0);
     add(ToolPresetKind::Isolation, "V-bit 20deg 0.10mm",           0.10, 0.05, 5.0, 160.0, 25.0, 2.0, 0.8, 60.0);
@@ -819,31 +849,33 @@ void doShowToolPresets() {
 
 Config buildConfigFromGUI() {
     Config cfg;
-    auto d = [](InputField* f) -> double {
-        return f ? parseD(f->getText()) : 0.0;
+
+    // Active preset as fallback for fields not present in UI
+    const ToolPreset* tp = (g_activeToolIndex >= 0 && g_activeToolIndex < (int)g_toolPresets.size())
+        ? &g_toolPresets[g_activeToolIndex] : nullptr;
+
+    auto fd = [](InputField* f, double fallback) -> double {
+        return f ? parseD(f->getText()) : fallback;
     };
 
-    cfg.machine.materialThickness = d(g_fldMaterial);
-    cfg.machine.engraver_tip_width  = d(g_fldToolDia);
-    cfg.machine.engraver_z_cut      = std::abs(d(g_fldCutDepth));
-    cfg.machine.engraver_z_travel   = d(g_fldSafeHeight);
-    cfg.machine.spindle_z_drill     = std::abs(d(g_fldZDrill));
-    cfg.machine.spindle_tool_diameter = d(g_fldDrillDia);
-    cfg.machine.move_feedrate       = 2400;
+    cfg.machine.materialThickness    = fd(g_fldMaterial,   1.5);
+    cfg.machine.engraver_tip_width   = fd(g_fldToolDia,    tp ? tp->toolDiameter  : 0.1);
+    cfg.machine.engraver_z_cut       = std::abs(fd(g_fldCutDepth,  tp ? tp->cutDepth      : 0.05));
+    cfg.machine.engraver_z_travel    = fd(g_fldSafeHeight, tp ? tp->safeHeight    : 5.0);
+    cfg.machine.spindle_z_drill      = std::abs(fd(g_fldZDrill,    tp ? tp->zDrill         : 2.0));
+    cfg.machine.spindle_tool_diameter = fd(g_fldDrillDia,  tp ? tp->drillDiameter : 0.8);
+    cfg.machine.move_feedrate        = 2400;
 
-    cfg.cam.overlap = d(g_fldOverlap);
-    cfg.cam.offset  = d(g_fldOffset);
+    cfg.cam.overlap = fd(g_fldOverlap, tp ? tp->overlap : 0.40);
+    cfg.cam.offset  = fd(g_fldOffset,  tp ? tp->offset  : 0.02);
 
-    cfg.job.engraver_feedrate  = d(g_fldFeedXY);
-    cfg.job.engraver_plunge_feedrate = d(g_fldFeedZ);
-    cfg.job.engraver_spindle_on = g_chkEngraverSpindle && g_chkEngraverSpindle->isChecked();
-    cfg.job.use_arcs           = !g_chkUseArcs || g_chkUseArcs->isChecked();  // default ON
-    cfg.job.spindle_feedrate   = d(g_fldDrillFeed);
-    cfg.job.spindle_power      = 255;
-    cfg.job.drill_dwell        = d(g_fldDrillDwell);
-    cfg.job.postProfile        = (g_chkFluidNC && g_chkFluidNC->isChecked())
-        ? PostProfile::FluidNC
-        : PostProfile::Mach3;
+    cfg.job.engraver_feedrate        = fd(g_fldFeedXY,    tp ? tp->feedRateXY : 300.0);
+    cfg.job.engraver_plunge_feedrate = fd(g_fldFeedZ,     tp ? tp->feedRateZ  : 100.0);
+    cfg.job.engraver_spindle_on      = g_optEngraverSpindle;
+    cfg.job.use_arcs                 = !g_chkUseArcs || g_chkUseArcs->isChecked();
+    cfg.job.spindle_feedrate         = fd(g_fldDrillFeed, tp ? tp->drillFeed  : 60.0);
+    cfg.job.spindle_power            = 255;
+    cfg.job.drill_dwell              = fd(g_fldDrillDwell, tp ? tp->drillDwell : 0.0);
 
     return cfg;
 }
@@ -1091,13 +1123,16 @@ void doLoadKicadDir() {
 
     logMsg("Parsing KiCad files from: " + dir);
 
+    const ToolPreset* tpL = (g_activeToolIndex >= 0 && g_activeToolIndex < (int)g_toolPresets.size())
+        ? &g_toolPresets[g_activeToolIndex] : nullptr;
+
     PipelineParams params;
-    params.config   = buildConfigFromGUI();
-    params.kicadDir = dir;
-    params.flip     = g_chkFlip ? g_chkFlip->isChecked() : false;
-    params.ignoreVia = g_chkIgnoreVia ? g_chkIgnoreVia->isChecked() : false;
-    params.xOffset  = g_fldXOffset ? parseD(g_fldXOffset->getText()) : 0.0;
-    params.yOffset  = g_fldYOffset ? parseD(g_fldYOffset->getText()) : 0.0;
+    params.config    = buildConfigFromGUI();
+    params.kicadDir  = dir;
+    params.flip      = g_optFlip;
+    params.ignoreVia = g_optIgnoreVia;
+    params.xOffset   = g_fldXOffset ? parseD(g_fldXOffset->getText()) : (tpL ? tpL->xOffset : 0.0);
+    params.yOffset   = g_fldYOffset ? parseD(g_fldYOffset->getText()) : (tpL ? tpL->yOffset : 0.0);
 
     // Copper sub-layer visibility
     if (g_canvas) {
@@ -1138,14 +1173,17 @@ static DWORD WINAPI generateThread(LPVOID) {
     if (outputFile.empty()) { logMsg("Error: Output file not set.");      goto done; }
 
     {
+        const ToolPreset* tpG = (g_activeToolIndex >= 0 && g_activeToolIndex < (int)g_toolPresets.size())
+            ? &g_toolPresets[g_activeToolIndex] : nullptr;
+
         PipelineParams params;
         params.config       = buildConfigFromGUI();
         params.kicadDir     = kicadDir;
         params.outputPath   = outputFile;
-        params.flip         = g_chkFlip     ? g_chkFlip->isChecked()     : false;
-        params.ignoreVia    = g_chkIgnoreVia? g_chkIgnoreVia->isChecked(): false;
-        params.xOffset      = g_fldXOffset  ? parseD(g_fldXOffset->getText()) : 0.0;
-        params.yOffset      = g_fldYOffset  ? parseD(g_fldYOffset->getText()) : 0.0;
+        params.flip         = g_chkFlip      ? g_chkFlip->isChecked()      : (tpG && tpG->flip);
+        params.ignoreVia    = g_chkIgnoreVia ? g_chkIgnoreVia->isChecked() : (tpG && tpG->ignoreVia);
+        params.xOffset      = g_fldXOffset   ? parseD(g_fldXOffset->getText()) : (tpG ? tpG->xOffset : 0.0);
+        params.yOffset      = g_fldYOffset   ? parseD(g_fldYOffset->getText()) : (tpG ? tpG->yOffset : 0.0);
 
         // Derive generation flags from layer visibility ("co widzimy to generujemy")
         if (g_canvas) {
@@ -1185,7 +1223,8 @@ static DWORD WINAPI generateThread(LPVOID) {
         }
 
         g_lastDebugPath.clear();
-        if (g_chkDebug && g_chkDebug->isChecked()) {
+        bool doDebug = g_optDebugImage;
+        if (doDebug) {
             std::string dbg = outputFile;
             size_t dot = dbg.rfind('.');
             if (dot != std::string::npos) dbg = dbg.substr(0, dot);

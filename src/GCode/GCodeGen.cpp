@@ -358,21 +358,17 @@ std::string generateGCode(
     std::ostringstream out;
     out << std::fixed << std::setprecision(4);
 
-    bool isFluidNC = (job.postProfile == PostProfile::FluidNC);
-
     out << "; gerber2gcode — CNC PCB isolation engraving\n";
     out << "G21 ; mm\n";
     out << "G90 ; absolute\n";
     out << "G17 ; XY plane\n";
     out << "G94 ; feed per minute\n";
-    if (!isFluidNC) out << "G54 ; work offset\n";
+    out << "G54 ; work offset\n";
     out << "G40 ; cancel cutter compensation\n";
-    if (!isFluidNC) {
-        out << "G49 ; cancel tool length offset\n";
-        out << "G80 ; cancel canned cycles\n";
-    }
+    out << "G49 ; cancel tool length offset\n";
+    out << "G80 ; cancel canned cycles\n";
     out << "M5 ; spindle off\n";
-    out << (isFluidNC ? "; post profile: FluidNC\n" : "; post profile: Mach3\n");
+    out << "; post profile: FluidNC\n";
     out << "G0 " << fmtZ(zProgramSafe) << " ; initial safe Z\n";
     out << "G28.1 ; store current position as home\n";
     out << "\n";
@@ -531,7 +527,7 @@ std::string generateGCode(
     out << "G0 " << fmtZ(zProgramSafe) << " ; safe Z\n";
     out << "G28 ; return to home position\n";
     out << "M5 ; spindle off\n";
-    out << (isFluidNC ? "M2 ; program end\n" : "M30 ; program end\n");
+    out << "M2 ; program end\n";
 
     return out.str();
 }
