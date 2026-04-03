@@ -115,10 +115,13 @@ extern std::string    g_lastKicadDir;
 // Layer panel
 extern HWND           g_hLayerPanel;
 
-// Option flags (formerly checkboxes — now controlled via Options menu)
-extern bool  g_optFlip;
+// Option flags (formerly checkboxes — now controlled via Options menu / toolbar)
+extern CopperSide  g_copperSide;       // which copper layer to machine
 extern bool  g_optIgnoreVia;
 extern bool  g_optEngraverSpindle;
+
+// Copper layer selector HWND (native ComboBox in toolbar Row 3)
+extern HWND  g_hwndCopperSide;
 
 // Menu bar handle (for CheckMenuItem sync)
 extern HMENU g_hMenuBar;
@@ -180,6 +183,7 @@ void rebuildLayerPanel();
 
 // Menu option checkmarks sync
 void syncMenuOptionCheckmarks();
+void syncCopperLayerCombo();
 
 // Resize
 void installResizeHandler();

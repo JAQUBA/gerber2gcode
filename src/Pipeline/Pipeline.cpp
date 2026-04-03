@@ -294,13 +294,21 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
         result.drillsNPTH = parseDrillFiles(kf.drillsNPTH, dx, dy, false, log);
 
         // Determine active copper (for isolation/clearance)
-        bool doFlip = params.flip || kf.isBack();
+        bool doFlip;
+        if (params.copperSide == CopperSide::Bottom) {
+            doFlip = true;
+        } else if (params.copperSide == CopperSide::Top) {
+            doFlip = false;
+        } else { // Auto
+            doFlip = kf.isBack();
+        }
         result.flipped = doFlip;
         GerberComponents& activeComp = doFlip ? result.copperBottomComp : result.copperTopComp;
         geo::Paths& activeCu = doFlip ? result.copperBottom : result.copperTop;
 
         if (doFlip) {
-            log("Flipping board (B_Cu)");
+            log("Flipping board (B_Cu — bottom view)");
+            // ── Flip active copper (B_Cu) into machine coordinate space ──
             activeComp.traces  = geo::flipX(activeComp.traces,  boardW);
             activeComp.pads    = geo::flipX(activeComp.pads,    boardW);
             activeComp.regions = geo::flipX(activeComp.regions, boardW);
@@ -311,6 +319,24 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
             activeCu = activeComp.combined();
             for (auto& h : result.drillsPTH)  h.x = boardW - h.x;
             for (auto& h : result.drillsNPTH) h.x = boardW - h.x;
+
+            // ── Flip remaining display layers so canvas shows consistent bottom view ──
+            // Inactive copper (F_Cu) mirrored to correct side-by-side position
+            GerberComponents& inactComp = result.copperTopComp;
+            if (!inactComp.traces.empty())  inactComp.traces  = geo::flipX(inactComp.traces,  boardW);
+            if (!inactComp.pads.empty())    inactComp.pads    = geo::flipX(inactComp.pads,    boardW);
+            if (!inactComp.regions.empty()) inactComp.regions = geo::flipX(inactComp.regions, boardW);
+            for (auto& pg : inactComp.padGroups) pg.paths = geo::flipX(pg.paths, boardW);
+            result.copperTop = inactComp.combined();
+            // Reference layers
+            if (!result.maskTop.empty())     result.maskTop     = geo::flipX(result.maskTop,     boardW);
+            if (!result.maskBottom.empty())  result.maskBottom  = geo::flipX(result.maskBottom,  boardW);
+            if (!result.silkTop.empty())     result.silkTop     = geo::flipX(result.silkTop,     boardW);
+            if (!result.silkBottom.empty())  result.silkBottom  = geo::flipX(result.silkBottom,  boardW);
+            if (!result.pasteTop.empty())    result.pasteTop    = geo::flipX(result.pasteTop,    boardW);
+            if (!result.pasteBottom.empty()) result.pasteBottom = geo::flipX(result.pasteBottom, boardW);
+            // Board outline (display only — clearance computed from local `outline` variable below)
+            for (auto& pt : result.outline) pt.x = boardW - pt.x;
         }
 
         // Collect circular pad info for arc eligibility
@@ -366,6 +392,10 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
             } else {
                 log("Warning: could not generate cutout path");
             }
+        }
+        // Flip cutout path for consistent display in bottom view
+        if (doFlip) {
+            for (auto& pt : result.cutoutPath) pt.x = boardW - pt.x;
         }
 
         // Collect holes for GCode generation
@@ -511,11 +541,19 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
         result.drillsNPTH = parseDrillFiles(kf.drillsNPTH, dx, dy, false, log);
 
         // Flip if needed
-        bool doFlip = params.flip || kf.isBack();
+        bool doFlip;
+        if (params.copperSide == CopperSide::Bottom) {
+            doFlip = true;
+        } else if (params.copperSide == CopperSide::Top) {
+            doFlip = false;
+        } else { // Auto
+            doFlip = kf.isBack();
+        }
         result.flipped = doFlip;
         GerberComponents& activeComp = doFlip ? result.copperBottomComp : result.copperTopComp;
         geo::Paths& activeCu = doFlip ? result.copperBottom : result.copperTop;
         if (doFlip) {
+            // ── Flip active copper (B_Cu) into machine coordinate space ──
             activeComp.traces  = geo::flipX(activeComp.traces,  boardW);
             activeComp.pads    = geo::flipX(activeComp.pads,    boardW);
             activeComp.regions = geo::flipX(activeComp.regions, boardW);
@@ -526,6 +564,21 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
             activeCu = activeComp.combined();
             for (auto& h : result.drillsPTH)  h.x = boardW - h.x;
             for (auto& h : result.drillsNPTH) h.x = boardW - h.x;
+
+            // ── Flip remaining display layers so canvas shows consistent bottom view ──
+            GerberComponents& inactComp = result.copperTopComp;
+            if (!inactComp.traces.empty())  inactComp.traces  = geo::flipX(inactComp.traces,  boardW);
+            if (!inactComp.pads.empty())    inactComp.pads    = geo::flipX(inactComp.pads,    boardW);
+            if (!inactComp.regions.empty()) inactComp.regions = geo::flipX(inactComp.regions, boardW);
+            for (auto& pg : inactComp.padGroups) pg.paths = geo::flipX(pg.paths, boardW);
+            result.copperTop = inactComp.combined();
+            if (!result.maskTop.empty())     result.maskTop     = geo::flipX(result.maskTop,     boardW);
+            if (!result.maskBottom.empty())  result.maskBottom  = geo::flipX(result.maskBottom,  boardW);
+            if (!result.silkTop.empty())     result.silkTop     = geo::flipX(result.silkTop,     boardW);
+            if (!result.silkBottom.empty())  result.silkBottom  = geo::flipX(result.silkBottom,  boardW);
+            if (!result.pasteTop.empty())    result.pasteTop    = geo::flipX(result.pasteTop,    boardW);
+            if (!result.pasteBottom.empty()) result.pasteBottom = geo::flipX(result.pasteBottom, boardW);
+            for (auto& pt : result.outline) pt.x = boardW - pt.x;
         }
 
         // Collect circular pad info for arc eligibility
@@ -548,6 +601,10 @@ PipelineResult parsePipelineData(const PipelineParams& params, LogCallback log) 
                 for (auto& pt : outPaths[0])
                     result.cutoutPath.push_back(pt);
             }
+        }
+        // Flip cutout path for consistent display in bottom view
+        if (doFlip) {
+            for (auto& pt : result.cutoutPath) pt.x = boardW - pt.x;
         }
 
         result.valid = true;

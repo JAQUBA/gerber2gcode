@@ -70,10 +70,11 @@ HWND           g_hLayerPanel   = nullptr;
 std::vector<LayerPanelItem> g_layerItems;
 
 // Option flags (controlled via Options menu, preset-initialised)
-bool  g_optFlip             = false;
+CopperSide g_copperSide         = CopperSide::Auto;
 bool  g_optIgnoreVia        = false;
 bool  g_optEngraverSpindle  = false;
 HMENU g_hMenuBar            = nullptr;
+HWND  g_hwndCopperSide      = nullptr;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Auto-refresh debounce
@@ -231,11 +232,12 @@ static void applyPresetManagedValues(const ToolPreset& tp) {
     if (g_chkIgnoreVia) g_chkIgnoreVia->setChecked(tp.ignoreVia);
     if (g_chkEngraverSpindle) g_chkEngraverSpindle->setChecked(tp.engraverSpindle);
     if (g_fldDrillDwell) g_fldDrillDwell->setText(dblStr(tp.drillDwell, 3).c_str());
-    // Update global option flags and sync menu checkmarks
-    g_optFlip             = tp.flip;
+    // Update global option flags and sync UI
+    g_copperSide          = tp.flip ? CopperSide::Bottom : CopperSide::Auto;
     g_optIgnoreVia        = tp.ignoreVia;
     g_optEngraverSpindle  = tp.engraverSpindle;
     syncMenuOptionCheckmarks();
+    syncCopperLayerCombo();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -244,9 +246,18 @@ static void applyPresetManagedValues(const ToolPreset& tp) {
 
 void syncMenuOptionCheckmarks() {
     if (!g_hMenuBar) return;
-    CheckMenuItem(g_hMenuBar, IDM_OPT_FLIP,    MF_BYCOMMAND | (g_optFlip            ? MF_CHECKED : MF_UNCHECKED));
-    CheckMenuItem(g_hMenuBar, IDM_OPT_NOVIAS,  MF_BYCOMMAND | (g_optIgnoreVia       ? MF_CHECKED : MF_UNCHECKED));
-    CheckMenuItem(g_hMenuBar, IDM_OPT_SPINDLE, MF_BYCOMMAND | (g_optEngraverSpindle ? MF_CHECKED : MF_UNCHECKED));
+    bool isBottom = (g_copperSide == CopperSide::Bottom);
+    CheckMenuItem(g_hMenuBar, IDM_OPT_FLIP,    MF_BYCOMMAND | (isBottom               ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(g_hMenuBar, IDM_OPT_NOVIAS,  MF_BYCOMMAND | (g_optIgnoreVia         ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(g_hMenuBar, IDM_OPT_SPINDLE, MF_BYCOMMAND | (g_optEngraverSpindle   ? MF_CHECKED : MF_UNCHECKED));
+}
+
+void syncCopperLayerCombo() {
+    if (!g_hwndCopperSide) return;
+    int sel = 0;
+    if      (g_copperSide == CopperSide::Top)    sel = 1;
+    else if (g_copperSide == CopperSide::Bottom) sel = 2;
+    SendMessageW(g_hwndCopperSide, CB_SETCURSEL, (WPARAM)sel, 0);
 }
 
 void logMsg(const std::string& msg) {
@@ -290,8 +301,13 @@ void loadSettings() {
     if (g_chkUseArcs) g_chkUseArcs->setChecked(s.getValue("use_arcs", "1") == "1");
     if (g_fldDrillDwell) g_fldDrillDwell->setText(s.getValue("drill_dwell", "0").c_str());
 
-    // Load option flags (drive Options menu checkmarks)
-    g_optFlip            = s.getValue("flip",             "0") == "1";
+    // Load option flags (drive Options menu checkmarks + layer selector)
+    {
+        std::string cs = s.getValue("copper_side", "");
+        if      (cs == "top")    g_copperSide = CopperSide::Top;
+        else if (cs == "bottom" || s.getValue("flip", "0") == "1") g_copperSide = CopperSide::Bottom;
+        else                     g_copperSide = CopperSide::Auto;
+    }
     g_optIgnoreVia       = s.getValue("ignore_via",       "0") == "1";
     g_optEngraverSpindle = s.getValue("engraver_spindle", "0") == "1";
     syncMenuOptionCheckmarks();
@@ -307,6 +323,10 @@ void loadSettings() {
 
     // Load tool presets
     loadToolPresets();
+
+    // Sync UI controls that depend on loaded state
+    syncMenuOptionCheckmarks();
+    syncCopperLayerCombo();
 }
 
 void saveSettings() {
@@ -334,8 +354,15 @@ void saveSettings() {
     if (g_chkEngraverSpindle) s.setValue("engraver_spindle", g_chkEngraverSpindle->isChecked() ? "1" : "0");
     if (g_chkUseArcs) s.setValue("use_arcs", g_chkUseArcs->isChecked() ? "1" : "0");
     if (g_fldDrillDwell) s.setValue("drill_dwell",   g_fldDrillDwell->getText());
-    // Save option flags
-    s.setValue("flip",             g_optFlip            ? "1" : "0");
+    // Save copper layer selection + option flags
+    {
+        const char* cs = "auto";
+        if      (g_copperSide == CopperSide::Top)    cs = "top";
+        else if (g_copperSide == CopperSide::Bottom) cs = "bottom";
+        s.setValue("copper_side", cs);
+        // keep legacy 'flip' key for backward compat
+        s.setValue("flip", (g_copperSide == CopperSide::Bottom) ? "1" : "0");
+    }
     s.setValue("ignore_via",       g_optIgnoreVia       ? "1" : "0");
     s.setValue("engraver_spindle", g_optEngraverSpindle ? "1" : "0");
 
@@ -1117,7 +1144,7 @@ void doLoadKicadDir() {
     PipelineParams params;
     params.config    = buildConfigFromGUI();
     params.kicadDir  = dir;
-    params.flip      = g_optFlip;
+    params.copperSide = g_copperSide;
     params.ignoreVia = g_optIgnoreVia;
     params.xOffset   = g_fldXOffset ? parseD(g_fldXOffset->getText()) : (tpL ? tpL->xOffset : 0.0);
     params.yOffset   = g_fldYOffset ? parseD(g_fldYOffset->getText()) : (tpL ? tpL->yOffset : 0.0);
@@ -1125,7 +1152,9 @@ void doLoadKicadDir() {
     // Copper sub-layer visibility
     if (g_canvas) {
         auto& lay = g_canvas->layers();
-        bool isFlipped = g_pipelineData.flipped || params.flip;
+        bool isFlipped = g_pipelineData.flipped ||
+                         (g_copperSide == CopperSide::Bottom) ||
+                         (g_copperSide == CopperSide::Auto && g_pipelineData.flipped);
         auto& sub = isFlipped ? lay.copperBottomSub : lay.copperTopSub;
         params.copperVis.traces  = sub.traces;
         params.copperVis.pads    = sub.pads;
@@ -1168,7 +1197,7 @@ static DWORD WINAPI generateThread(LPVOID) {
         params.config       = buildConfigFromGUI();
         params.kicadDir     = kicadDir;
         params.outputPath   = outputFile;
-        params.flip         = g_chkFlip      ? g_chkFlip->isChecked()      : (tpG && tpG->flip);
+        params.copperSide   = g_copperSide;
         params.ignoreVia    = g_chkIgnoreVia ? g_chkIgnoreVia->isChecked() : (tpG && tpG->ignoreVia);
         params.xOffset      = g_fldXOffset   ? parseD(g_fldXOffset->getText()) : (tpG ? tpG->xOffset : 0.0);
         params.yOffset      = g_fldYOffset   ? parseD(g_fldYOffset->getText()) : (tpG ? tpG->yOffset : 0.0);
@@ -1194,7 +1223,8 @@ static DWORD WINAPI generateThread(LPVOID) {
             collectDisabled(g_canvas->drillFilterNPTH());
 
             // Copper sub-layer visibility
-            bool isFlipped = params.flip;
+            bool isFlipped = (g_copperSide == CopperSide::Bottom) ||
+                             (g_copperSide == CopperSide::Auto && g_pipelineData.flipped);
             auto& sub = isFlipped ? lay.copperBottomSub : lay.copperTopSub;
             params.copperVis.traces  = sub.traces;
             params.copperVis.pads    = sub.pads;

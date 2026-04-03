@@ -391,7 +391,7 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
     if (msg == WM_CTLCOLORLISTBOX) {
         HDC hdc = (HDC)wParam;
         HWND hCtrl = (HWND)lParam;
-        if (hCtrl == g_hLayerPanel) {
+        if (hCtrl == g_hLayerPanel || hCtrl == g_hwndCopperSide) {
             if (!g_brList) g_brList = CreateSolidBrush(CLR_LIST_BG);
             SetTextColor(hdc, CLR_LIST_TEXT);
             SetBkColor(hdc, CLR_LIST_BG);
@@ -413,6 +413,18 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
         } else {
             doRefreshIsolation();
         }
+        return 0;
+    }
+    // Copper layer selector ComboBox change
+    if (msg == WM_COMMAND && LOWORD(wParam) == 9600 && HIWORD(wParam) == CBN_SELCHANGE) {
+        int sel = (int)SendMessageW(g_hwndCopperSide, CB_GETCURSEL, 0, 0);
+        CopperSide prev = g_copperSide;
+        if      (sel == 1) g_copperSide = CopperSide::Top;
+        else if (sel == 2) g_copperSide = CopperSide::Bottom;
+        else               g_copperSide = CopperSide::Auto;
+        syncMenuOptionCheckmarks();
+        if (g_copperSide != prev)
+            scheduleAutoRefresh(true);
         return 0;
     }
     // Layer panel click handler — uses g_layerItems mapping
@@ -569,6 +581,30 @@ void createUI(SimpleWindow* win) {
         L"Ctrl+O  Ctrl+G  Ctrl+R  Ctrl+L  F5  F6  F7",
         9, false);
 
+    // ── Row 3: Copper layer selector ─────────────────────────────────────
+    y = 78;
+
+    addSectionLabel(win, m, y + 2, 70, L"Layer:");
+
+    // Native ComboBox (CBS_DROPDOWNLIST — not editable) for copper side selection
+    g_hwndCopperSide = CreateWindowExW(0, L"COMBOBOX", NULL,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_HASSTRINGS,
+        m + 72, y, 200, 200,  // height 200 = dropdown list area
+        win->getHandle(), (HMENU)(intptr_t)9600, _core.hInstance, NULL);
+    if (g_hwndCopperSide) {
+        SendMessageW(g_hwndCopperSide, WM_SETFONT,
+            (WPARAM)CreateFontW(17, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+                DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI"), TRUE);
+        SendMessageW(g_hwndCopperSide, CB_ADDSTRING, 0, (LPARAM)L"Auto (detect)");
+        SendMessageW(g_hwndCopperSide, CB_ADDSTRING, 0, (LPARAM)L"F_Cu — Top");
+        SendMessageW(g_hwndCopperSide, CB_ADDSTRING, 0, (LPARAM)L"B_Cu — Bottom  \u2194");
+        SendMessageW(g_hwndCopperSide, CB_SETCURSEL, 0, 0);
+    }
+
+    addLabel(win, m + 290, y + 4, 560,
+        L"Select which copper layer to isolate. \"Bottom\" mirrors the board for back-side machining.",
+        9, false);
+
     // ── Canvas (will be repositioned by doResize) ────────────────────────
 
     g_canvas = new PCBCanvas();
@@ -628,7 +664,7 @@ void createUI(SimpleWindow* win) {
         AppendMenuW(hView, MF_STRING, IDM_VIEW_ALLON,  L"All layers &on");
         AppendMenuW(hView, MF_STRING, IDM_VIEW_FOCUS,  L"&Focus copper");
 
-        AppendMenuW(hOpts, MF_STRING | (g_optFlip            ? MF_CHECKED : 0), IDM_OPT_FLIP,    L"&Flip board (mirror X)");
+        AppendMenuW(hOpts, MF_STRING | (g_copperSide == CopperSide::Bottom ? MF_CHECKED : 0), IDM_OPT_FLIP,    L"&Flip board (B_Cu / mirror X)");
         AppendMenuW(hOpts, MF_STRING | (g_optIgnoreVia       ? MF_CHECKED : 0), IDM_OPT_NOVIAS,  L"Ignore &via holes");
         AppendMenuW(hOpts, MF_SEPARATOR, 0, NULL);
         AppendMenuW(hOpts, MF_STRING | (g_optEngraverSpindle ? MF_CHECKED : 0), IDM_OPT_SPINDLE, L"&Engraver spindle M3");
@@ -671,8 +707,10 @@ void createUI(SimpleWindow* win) {
             case IDM_VIEW_ALLON:   setAllLayersVisible(true); break;
             case IDM_VIEW_FOCUS:   applyCopperFocusPreset(); break;
             case IDM_OPT_FLIP:
-                g_optFlip = !g_optFlip;
+                // Toggle between Auto and Bottom
+                g_copperSide = (g_copperSide == CopperSide::Bottom) ? CopperSide::Auto : CopperSide::Bottom;
                 syncMenuOptionCheckmarks();
+                syncCopperLayerCombo();
                 scheduleAutoRefresh(true);
                 break;
             case IDM_OPT_NOVIAS:

@@ -11,6 +11,13 @@
 
 using LogCallback = std::function<void(const std::string&)>;
 
+// Active copper layer selection
+enum class CopperSide {
+    Auto,    // use F_Cu if present, fall back to B_Cu (legacy behaviour)
+    Top,     // force F_Cu regardless of what files exist
+    Bottom   // force B_Cu (mirrors geometry for machine coords)
+};
+
 // Copper sub-layer visibility — controls which copper features are included
 struct CopperVisibility {
     bool traces  = true;
@@ -28,9 +35,9 @@ struct PipelineParams {
     Config config;
     std::string kicadDir;
     std::string outputPath;
-    double xOffset  = 0.0;
-    double yOffset  = 0.0;
-    bool flip       = false;
+    double xOffset      = 0.0;
+    double yOffset      = 0.0;
+    CopperSide copperSide = CopperSide::Auto;  // which copper layer to machine
     bool ignoreVia  = false;
     std::string debugPath;
     // Generation flags (derived from layer visibility)
