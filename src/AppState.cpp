@@ -238,8 +238,9 @@ static void applyPresetManagedValues(const ToolPreset& tp) {
     g_copperSide          = tp.flip ? CopperSide::Bottom : CopperSide::Auto;
     g_optIgnoreVia        = tp.ignoreVia;
     g_optEngraverSpindle  = tp.engraverSpindle;
-    syncMenuOptionCheckmarks();
-    syncCopperLayerCombo();
+        syncMenuOptionCheckmarks();
+        syncCopperLayerCombo();
+        syncLayerPanelWithCopperSideSelection();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -259,6 +260,7 @@ void syncCopperLayerCombo() {
     int sel = 0;
     if      (g_copperSide == CopperSide::Top)    sel = 1;
     else if (g_copperSide == CopperSide::Bottom) sel = 2;
+    else if (g_copperSide == CopperSide::Drill)  sel = 3;
     SendMessageW(g_hwndCopperSide, CB_SETCURSEL, (WPARAM)sel, 0);
 }
 
@@ -308,6 +310,7 @@ void loadSettings() {
         std::string cs = s.getValue("copper_side", "");
         if      (cs == "top")    g_copperSide = CopperSide::Top;
         else if (cs == "bottom" || s.getValue("flip", "0") == "1") g_copperSide = CopperSide::Bottom;
+        else if (cs == "drill")  g_copperSide = CopperSide::Drill;
         else                     g_copperSide = CopperSide::Auto;
     }
     g_optIgnoreVia       = s.getValue("ignore_via",       "0") == "1";
@@ -362,6 +365,7 @@ void saveSettings() {
         const char* cs = "auto";
         if      (g_copperSide == CopperSide::Top)    cs = "top";
         else if (g_copperSide == CopperSide::Bottom) cs = "bottom";
+        else if (g_copperSide == CopperSide::Drill)  cs = "drill";
         s.setValue("copper_side", cs);
         // keep legacy 'flip' key for backward compat
         s.setValue("flip", (g_copperSide == CopperSide::Bottom) ? "1" : "0");
@@ -925,7 +929,14 @@ void rebuildLayerPanel() {
         std::wstring text = visible ? L"  \u2611 " : L"  \u2610 ";
         text += name;
         SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
-        g_layerItems.push_back({false, flag});
+        g_layerItems.push_back({false, flag, LayerPanelAction::ToggleFlag});
+    };
+
+    auto addActionItem = [](const wchar_t* name, bool active, LayerPanelAction action) {
+        std::wstring text = active ? L"  \u2611 " : L"  \u2610 ";
+        text += name;
+        SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
+        g_layerItems.push_back({false, nullptr, action});
     };
 
     auto addSubItem = [](const wchar_t* name, bool visible, bool* flag) {
@@ -1019,12 +1030,72 @@ void rebuildLayerPanel() {
     }
 
     // ── Generated ──
-    if (pres.clearance || pres.isolation || pres.cutout) {
+    if (pres.clearance || pres.isolation || pres.cutout || pres.drillsPTH || pres.drillsNPTH) {
         addSection(L"Generated");
+        bool drillOnly = (lay.drillsPTH || lay.drillsNPTH) && !lay.isolation && !lay.cutout;
+        if (pres.drillsPTH || pres.drillsNPTH)
+            addActionItem(L"Drill Only", drillOnly, LayerPanelAction::SelectDrillOnlyMode);
         if (pres.clearance)    addItem(L"Clearance",       lay.clearance,  &lay.clearance);
         if (pres.isolation)    addItem(L"Isolation Paths", lay.isolation,  &lay.isolation);
         if (pres.cutout)       addItem(L"Cutout",          lay.cutout,     &lay.cutout);
     }
+}
+
+void selectDrillOnlyModeFromLayerPanel() {
+    if (!g_canvas) return;
+
+    auto& lay = g_canvas->layers();
+    auto& pres = g_canvas->presence();
+
+    lay.isolation = false;
+    lay.cutout = false;
+    lay.drillsPTH = pres.drillsPTH;
+    lay.drillsNPTH = pres.drillsNPTH;
+
+    if (g_chkCutout)
+        g_chkCutout->setChecked(false);
+}
+
+void syncLayerPanelWithCopperSideSelection() {
+    if (!g_canvas) return;
+
+    auto& lay = g_canvas->layers();
+    auto& pres = g_canvas->presence();
+
+    if (g_copperSide == CopperSide::Drill) {
+        selectDrillOnlyModeFromLayerPanel();
+        rebuildLayerPanel();
+        g_canvas->redraw();
+        return;
+    }
+
+    lay.isolation = true;
+    lay.cutout = false;
+    lay.drillsPTH = false;
+    lay.drillsNPTH = false;
+
+    if (g_chkCutout)
+        g_chkCutout->setChecked(false);
+
+    bool preferBottom = false;
+    if (g_copperSide == CopperSide::Bottom) {
+        preferBottom = true;
+    } else if (g_copperSide == CopperSide::Auto) {
+        preferBottom = g_pipelineData.valid && g_pipelineData.flipped;
+    }
+
+    if (pres.copperTop || pres.copperBottom) {
+        if (preferBottom) {
+            lay.copperBottom = pres.copperBottom;
+            lay.copperTop = pres.copperBottom ? false : pres.copperTop;
+        } else {
+            lay.copperTop = pres.copperTop;
+            lay.copperBottom = pres.copperTop ? false : pres.copperBottom;
+        }
+    }
+
+    rebuildLayerPanel();
+    g_canvas->redraw();
 }
 
 // ════════════════════════════════════════════════════════════════════════════

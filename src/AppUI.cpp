@@ -421,8 +421,10 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
         CopperSide prev = g_copperSide;
         if      (sel == 1) g_copperSide = CopperSide::Top;
         else if (sel == 2) g_copperSide = CopperSide::Bottom;
+        else if (sel == 3) g_copperSide = CopperSide::Drill;
         else               g_copperSide = CopperSide::Auto;
         syncMenuOptionCheckmarks();
+        syncLayerPanelWithCopperSideSelection();
         if (g_copperSide != prev)
             scheduleAutoRefresh(true);
         return 0;
@@ -432,7 +434,11 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
         int idx = (int)SendMessageW(g_hLayerPanel, LB_GETCURSEL, 0, 0);
         if (idx >= 0 && idx < (int)g_layerItems.size() && g_canvas) {
             auto& item = g_layerItems[idx];
-            if (!item.isSection && item.flag) {
+            if (!item.isSection && item.action == LayerPanelAction::SelectDrillOnlyMode) {
+                selectDrillOnlyModeFromLayerPanel();
+                rebuildLayerPanel();
+                g_canvas->redraw();
+            } else if (!item.isSection && item.flag) {
                 *item.flag = !(*item.flag);
 
                 // Sync cutout checkbox when cutout layer is toggled in panel
@@ -602,6 +608,7 @@ void createUI(SimpleWindow* win) {
         SendMessageW(g_hwndCopperSide, CB_ADDSTRING, 0, (LPARAM)L"Auto (detect)");
         SendMessageW(g_hwndCopperSide, CB_ADDSTRING, 0, (LPARAM)L"F_Cu — Top");
         SendMessageW(g_hwndCopperSide, CB_ADDSTRING, 0, (LPARAM)L"B_Cu — Bottom  \u2194");
+        SendMessageW(g_hwndCopperSide, CB_ADDSTRING, 0, (LPARAM)L"Drill");
         SendMessageW(g_hwndCopperSide, CB_SETCURSEL, 0, 0);
     }
 
@@ -618,7 +625,7 @@ void createUI(SimpleWindow* win) {
     styleCheck(g_chkCutout);
 
     addLabel(win, m + 444, y + 4, 480,
-        L"Layer: which copper side to isolate. Check \"Cutout\" to mill board outline.",
+        L"Layer: choose copper side to isolate or Drill for drilling-only mode. Check \"Cutout\" to mill board outline.",
         9, false);
 
     // ── Canvas (will be repositioned by doResize) ────────────────────────

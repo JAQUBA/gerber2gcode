@@ -54,9 +54,15 @@ struct ToolPreset {
 // Layer Panel Item — maps listbox index to toggle action
 // ════════════════════════════════════════════════════════════════════════════
 
+enum class LayerPanelAction {
+    ToggleFlag,
+    SelectDrillOnlyMode,
+};
+
 struct LayerPanelItem {
     bool  isSection;        // true = non-clickable header
     bool* flag = nullptr;   // pointer to bool to toggle (null for sections)
+    LayerPanelAction action = LayerPanelAction::ToggleFlag;
 };
 
 extern std::vector<LayerPanelItem> g_layerItems;
@@ -181,6 +187,8 @@ Config buildConfigFromGUI();
 
 // Layer panel
 void rebuildLayerPanel();
+void selectDrillOnlyModeFromLayerPanel();
+void syncLayerPanelWithCopperSideSelection();
 
 // Menu option checkmarks sync
 void syncMenuOptionCheckmarks();

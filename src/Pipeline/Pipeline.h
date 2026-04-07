@@ -15,7 +15,8 @@ using LogCallback = std::function<void(const std::string&)>;
 enum class CopperSide {
     Auto,    // use F_Cu if present, fall back to B_Cu (legacy behaviour)
     Top,     // force F_Cu regardless of what files exist
-    Bottom   // force B_Cu (mirrors geometry for machine coords)
+    Bottom,  // force B_Cu (mirrors geometry for machine coords)
+    Drill    // drilling-only UI mode; copper side falls back to auto internally
 };
 
 // Copper sub-layer visibility — controls which copper features are included

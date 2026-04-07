@@ -22,6 +22,7 @@ Native Windows desktop application for converting KiCad Gerber (RS-274X) and Exc
 - **Clipper2-based isolation** — contour-parallel inward offset toolpaths with configurable overlap and safety offset from copper edge
 - **Real-time GDI preview** — zoomable/pannable canvas with 13 layer types: board outline, copper (top/bottom), mask, silkscreen, paste, clearance, isolation paths, and drill holes
 - **Layer visibility panel** — toggle individual layers on/off for focused inspection
+- **Drill-only switching** — both the layer panel `Drill Only` item and the top layer-selection dropdown can switch generation to drilling-only G-Code
 - **Polished dark workstation UI** — high-contrast themed numeric fields, wider layer panel with improved readability, and refined spacing/typography for long CAM sessions
 - **Quick action strip** — one-click `Reload`, `Fit`, `Reset`, `Grid`, `All On`, and `Focus` actions for faster preview iteration
 - **Keyboard shortcuts** — `Ctrl+O` open KiCad folder, `Ctrl+G` generate, `Ctrl+R` reload, `Ctrl+L` clear log, `F5` reload, `F6` fit, `F7` grid toggle
@@ -69,11 +70,13 @@ The output binary `gerber2gcode.exe` is placed in `.pio/build/windows_x86/`.
 
 1. **Open KiCad directory** — click "Open KiCad..." and select a folder with Gerber (`.gbr`) and drill (`.drl`) files. Layers are detected automatically by KiCad naming convention.
 2. **Select tool preset** — pick a machining preset from the dropdown. The app automatically applies matching generation mode (Isolation / Combo / Drill / Cutout), feed/depth tool values, overlap/offset defaults, and resets position toggles.
-3. **Set laminate thickness** — adjust only the `Mat` field for your board. Other machining fields (feeds/depths/offsets/drill/cutout toggles) are auto-managed and locked to prevent accidental mismatch.
-4. **Use quick actions** — `Reload` to re-parse, `Fit` to frame board, `Reset` to default view, `Grid` to toggle grid, `All On` to reveal all layers, `Focus` for copper-centric inspection
-5. **Generate** — click "Generate" (or `Ctrl+G`) to compute toolpaths (runs in background thread)
-6. **Preview** — inspect the result in the canvas (scroll to zoom, drag to pan, double-click to reset)
-7. **Export G-Code** — click "Export GCode" to save the `.gcode` file
+3. **Choose layer/mode** — use the `Layer` dropdown to select `Auto`, `F_Cu — Top`, `B_Cu — Bottom`, or `Drill`. Choosing `Drill` synchronizes the side panel to drilling-only generation.
+4. **Set laminate thickness** — adjust only the `Mat` field for your board. Other machining fields (feeds/depths/offsets/drill/cutout toggles) are auto-managed and locked to prevent accidental mismatch.
+5. **Use quick actions** — `Reload` to re-parse, `Fit` to frame board, `Reset` to default view, `Grid` to toggle grid, `All On` to reveal all layers, `Focus` for copper-centric inspection
+6. **Select drilling-only mode if needed** — either pick `Drill` in the `Layer` dropdown or click `Drill Only` in the side panel to generate G-Code only for PTH/NPTH drilling without isolation or cutout
+7. **Generate** — click "Generate" (or `Ctrl+G`) to compute toolpaths (runs in background thread)
+8. **Preview** — inspect the result in the canvas (scroll to zoom, drag to pan, double-click to reset)
+9. **Export G-Code** — click "Export GCode" to save the `.gcode` file
 
 ### KiCad File Naming
 
