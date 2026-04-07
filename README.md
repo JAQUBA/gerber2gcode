@@ -57,6 +57,14 @@ pio run
 
 Clipper2 is downloaded automatically on build (if missing) by JQB_CAMCommon library manifest (`library.json` → `build.extraScript`).
 
+The checked-in `platformio.ini` uses GitHub dependencies for `JQB_WindowsLib` and `JQB_CAMCommon`:
+
+```ini
+lib_deps =
+  https://github.com/JAQUBA/JQB_WindowsLib.git
+  https://github.com/JAQUBA/JQB_CAMCommon.git
+```
+
 For local library development in a multi-repo workspace, `platformio.ini` can use:
 
 ```ini
@@ -76,8 +84,8 @@ The output binary `gerber2gcode.exe` is placed in `.pio/build/windows_x86/`.
 
 | Library | Purpose | Integration |
 |---------|---------|-------------|
-| [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) | Win32 UI framework (including `Util/FileDialogs`) | Local path dependency (`../JQB_WindowsLib`) |
-| JQB_CAMCommon | Shared CAM utilities (`PathOptimization`, `GCodeFormat`, `ArcMath`, `Geometry`, `RouteStats`) | Standalone local dependency (`../JQB_CAMCommon`) |
+| [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) | Win32 UI framework (including `Util/FileDialogs`) | Git dependency in `platformio.ini` (local path optional for multi-repo development) |
+| [JQB_CAMCommon](https://github.com/JAQUBA/JQB_CAMCommon) | Shared CAM utilities (`PathOptimization`, `GCodeFormat`, `ArcMath`, `Geometry`, `RouteStats`) | Git dependency in `platformio.ini` (local path optional for multi-repo development) |
 | [Clipper2](https://github.com/AngusJohnson/Clipper2) | Polygon boolean & offset | Auto-downloaded to `lib/Clipper2` by pre-build script when missing |
 
 ## Usage
@@ -92,6 +100,8 @@ The output binary `gerber2gcode.exe` is placed in `.pio/build/windows_x86/`.
 8. **Generate** — click "Generate" (or `Ctrl+G`) to compute toolpaths (runs in background thread)
 9. **Preview** — inspect the result in the canvas (scroll to zoom, drag to pan, double-click to reset)
 10. **Export G-Code** — click "Export GCode" to save the `.gcode` file
+
+The `Help → About gerber2gcode...` dialog inside the binary lists the bundled/open-source libraries together with their licenses.
 
 ### KiCad File Naming
 
@@ -134,7 +144,7 @@ src/
 ├── Drill/
 │   └── DrillParser.h / .cpp    # Excellon drill parser
 ├── Geometry/
-│   └── Geometry.h / .cpp       # geo:: namespace — Clipper2 wrappers & shape generators
+│   └── Geometry.h / .cpp       # geo:: namespace — re-export of JQB_CAMCommon Geometry module
 ├── Toolpath/
 │   └── Toolpath.h / .cpp       # Contour-parallel isolation + 2-opt TSP ordering + exact-circle metadata
 ├── GCode/
@@ -145,16 +155,10 @@ src/
     └── DebugImage.h / .cpp     # Debug BMP output (re-parses G-Code for validation)
 
 lib/
-├── Clipper2/                   # Git submodule: polygon boolean/offset library
-└── JQB_CAMCommon/
-  ├── library.json            # PlatformIO library manifest (LGPL-3.0-or-later)
-  ├── LICENSE                 # LGPL-3.0-or-later license text
-  ├── README.md               # API and usage notes
-  └── src/Common/
-    ├── PathOptimization.h/.cpp # Generic nearest-neighbor + 2-opt ordering for points/chains
-    ├── GCodeFormat.h/.cpp      # Reusable G-code token formatting helpers (XY/Z/F/IJ/S)
-    └── ArcMath.h/.cpp          # Reusable arc/line math helpers (circle fit, line distance, turn angle)
+└── Clipper2/                   # Auto-downloaded local copy used by JQB_CAMCommon Geometry
 ```
+
+`JQB_CAMCommon` is consumed as an external PlatformIO dependency. It provides shared CAM modules such as `Geometry`, `PathOptimization`, `ArcMath`, `GCodeFormat`, and `RouteStats`.
 
 ### Processing Pipeline
 
@@ -252,7 +256,13 @@ Contributions are welcome! Please:
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+The source code in this repository is licensed under the [MIT License](LICENSE).
+
+This repository also depends on third-party components with separate licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.
+
+Important: while this repository's own source files are MIT-licensed, distributed binaries must also comply with the licenses of linked dependencies (currently LGPL for JQB_WindowsLib and JQB_CAMCommon, plus BSL-1.0 for Clipper2).
+
+Because the current build uses static linking, a compliant distribution should also include the required third-party license texts and a practical LGPL relinking path for JQB_WindowsLib and JQB_CAMCommon (for example relinkable object files or an equivalent mechanism).
 
 ## Acknowledgments
 

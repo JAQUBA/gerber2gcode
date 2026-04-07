@@ -698,9 +698,12 @@ void createUI(SimpleWindow* win) {
                     L"  3. Ustaw grubość laminatu (Mat)\r\n"
                     L"  4. Wygeneruj G-Code (Ctrl+G)\r\n"
                     L"\r\n"
-                    L"Biblioteki:\r\n"
-                    L"  Clipper2 \u00A9 Angus Johnson\r\n"
-                    L"  JQB_WindowsLib \u00A9 JAQUBA",
+                    L"Użyte biblioteki i licencje:\r\n"
+                    L"  JQB_WindowsLib — LGPL-3.0-or-later\r\n"
+                    L"  JQB_CAMCommon — LGPL-3.0-or-later\r\n"
+                    L"  Clipper2 — Boost Software License 1.0\r\n"
+                    L"\r\n"
+                    L"Szczegóły dystrybucji: patrz LICENSE i THIRD_PARTY_NOTICES.md",
                     L"O programie — gerber2gcode",
                     MB_OK | MB_ICONINFORMATION);
                 break;

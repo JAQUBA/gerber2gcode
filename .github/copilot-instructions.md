@@ -1,6 +1,6 @@
 ﻿# Copilot Instructions — gerber2gcode
 
-> **IMPORTANT:** Keep this file and `README.md` up to date whenever you add, rename, or remove modules, change data structures, add UI components, modify G-Code output, or change configuration keys.
+> **IMPORTANT:** Keep this file, `README.md`, and licensing docs (`LICENSE`, `THIRD_PARTY_NOTICES.md`) up to date whenever you add, rename, or remove modules, change data structures, add UI components, modify G-Code output, change configuration keys, or change dependencies/licenses.
 
 ## Project Description
 
@@ -33,7 +33,7 @@ gerber2gcode/
 │   └── Debug/
 │       └── DebugImage.h / .cpp     # Debug BMP output (re-parses G-Code for visual validation)
 ├── lib/
-│   └── Clipper2/                   # Git submodule: Clipper2 polygon boolean & offset library
+│   └── Clipper2/                   # Auto-downloaded local Clipper2 source used by JQB_CAMCommon Geometry
 ├── resources/
 │   └── resources.rc               # Windows resource file (version info)
 ├── examples/                      # Example KiCad Gerber & Excellon files
@@ -42,7 +42,7 @@ gerber2gcode/
 
 #### External Libraries (via lib_deps)
 
-- **JQB_CAMCommon** (`../JQB_CAMCommon`) — Reusable utilities shared across CAM modules:
+- **JQB_CAMCommon** (`https://github.com/JAQUBA/JQB_CAMCommon.git`; optionally `../JQB_CAMCommon` in local multi-repo development) — Reusable utilities shared across CAM modules:
   - `PathOptimization` (generic nearest-neighbor + 2-opt for points and reversible chains)
   - `GCodeFormat` (consistent XY/Z/F/IJ/S token formatting helpers)
   - `ArcMath` (shared circle fit, point-line distance, and turn-angle primitives for arc fitting)
@@ -57,7 +57,7 @@ gerber2gcode/
 |--------|---------------|
 | **main.cpp** | `init()` (COM init), `setup()` (window + menu + UI + canvas), `loop()` (empty — event-driven). Minimal, delegates everything. |
 | **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). `applyActiveToolPreset()` auto-applies tool kind workflow: generation mode mapping (Isolation / Combo / Drill / Cutout), CAM defaults (overlap/offset), XY/flip/via reset, and redraw/reparse scheduling. Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates + `doRecomputeClearance()` for copper sub-layer visibility changes. Layer panel: `rebuildLayerPanel()` — uses `TreePanel` widget (`g_treePanel`, JQB_WindowsLib `UI/TreePanel`) with `onToggle` callbacks; `Drill Only` action item triggers `selectDrillOnlyModeFromLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
-| **AppUI** | `createUI(SimpleWindow*)` — polished 4-row toolbar with section headers (Project / Machining / Position), styled action buttons, themed numeric fields, canvas, wider layer panel, log area, progress bar, and quick-action strip (`Reload`, `Fit`, `Reset`, `Grid`, `All On`, `Focus`). `doResize(w, h)` — dynamic layout. Button styling helpers. Uses JQB_WindowsLib `Util/FileDialogs` for folder/save dialogs. Auto-managed machining controls (feeds/depths/overlap/offset/drill/XY/Flip/No Vias/Debug/Eng M3/Dwell) are read-only or disabled; workflow expects selecting a tool preset and editing mainly `Mat` (material thickness). Arcs toggle controls G2/G3 arc fitting. Browse KiCad button immediately loads and previews the selected directory. Main window keyboard shortcuts: `Ctrl+O`, `Ctrl+G`, `Ctrl+R`, `Ctrl+L`, `F5`, `F6`, `F7`. The `Layer` dropdown supports `Auto`, `F_Cu — Top`, `B_Cu — Bottom`, and `Drill`; choosing `Drill` synchronizes the side panel to drilling-only generation. Layer panel click handling also supports the `Drill Only` action item. |
+| **AppUI** | `createUI(SimpleWindow*)` — polished 4-row toolbar with section headers (Project / Machining / Position), styled action buttons, themed numeric fields, canvas, wider layer panel, log area, progress bar, and quick-action strip (`Reload`, `Fit`, `Reset`, `Grid`, `All On`, `Focus`). `doResize(w, h)` — dynamic layout. Button styling helpers. Uses JQB_WindowsLib `Util/FileDialogs` for folder/save dialogs. Auto-managed machining controls (feeds/depths/overlap/offset/drill/XY/Flip/No Vias/Debug/Eng M3/Dwell) are read-only or disabled; workflow expects selecting a tool preset and editing mainly `Mat` (material thickness). Arcs toggle controls G2/G3 arc fitting. Browse KiCad button immediately loads and previews the selected directory. Main window keyboard shortcuts: `Ctrl+O`, `Ctrl+G`, `Ctrl+R`, `Ctrl+L`, `F5`, `F6`, `F7`. The `Layer` dropdown supports `Auto`, `F_Cu — Top`, `B_Cu — Bottom`, and `Drill`; choosing `Drill` synchronizes the side panel to drilling-only generation. Layer panel click handling also supports the `Drill Only` action item. `Help → About gerber2gcode...` shows bundled libraries and their licenses. |
 | **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom) with per-component sub-layers (traces/pads/regions in distinct color shades), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` with `CopperSubVis` / `CopperSubPresence` structs. `DrillFilter` groups holes by diameter for per-diameter visibility. `zoomToFit()`. Back-to-front rendering order. |
 | **Config** | `Config` struct with `MachineConfig` (engraver Z, tip width, drill Z, feedrates, offsets), `CamConfig` (overlap, offset), `JobConfig` (engraver/spindle/laser feedrates). `loadConfig()` — minimal JSON parser. |
 | **Geometry** | `geo::` namespace — Re-exports universal functions from JQB_CAMCommon `Geometry` module (Clipper2-based). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
@@ -74,7 +74,7 @@ gerber2gcode/
 - **Build system**: PlatformIO (`platform = native` via JQB_MinGW)
 - **UI framework**: [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) — lightweight Win32 UI library
 - **CAM library**: [JQB_CAMCommon](https://github.com/JAQUBA/JQB_CAMCommon) — reusable CAM utilities (path optimization, G-code format, geometry, arc math, route stats)
-- **Geometry library**: [Clipper2](https://github.com/AngusJohnson/Clipper2) — polygon boolean operations & offset (git submodule in `lib/Clipper2`)
+- **Geometry library**: [Clipper2](https://github.com/AngusJohnson/Clipper2) — polygon boolean operations & offset (auto-downloaded to `lib/Clipper2` when missing)
 - **Rendering**: WinAPI GDI (via reusable CanvasWindow — zoom/pan/grid inherited)
 - **Target platform**: Windows 10+ (x64)
 
@@ -575,16 +575,16 @@ Use `logMsg(const std::string&)` or `logMsg(const wchar_t*)` from `AppState.h`. 
 [env:windows_x86]
 platform = https://github.com/JAQUBA/JQB_MinGW.git
 lib_deps =
-    ../JQB_WindowsLib
-    ../JQB_CAMCommon
+  https://github.com/JAQUBA/JQB_WindowsLib.git
+  https://github.com/JAQUBA/JQB_CAMCommon.git
 lib_extra_dirs =
     lib/Clipper2/CPP
 ```
 
 > C++17, UNICODE, static linking, and library flags are added automatically by `compile_resources.py`.
 > Output binary name is set automatically from `InternalName` in `resources/resources.rc` `VS_VERSION_INFO`.
-> **Note**: `JQB_CAMCommon` is a standalone library in `d:\Programowanie\JQB_CAMCommon` (canonical location). Both gerber2gcode and WektoroweLitery2 reference it via `../JQB_CAMCommon`.
-> **Note**: Clipper2 is auto-downloaded by `../JQB_CAMCommon/library.json` (`build.extraScript`) when `lib/Clipper2` is missing.
+> **Note**: For local multi-repo development, `JQB_WindowsLib` and `JQB_CAMCommon` can be switched from Git URLs to `../JQB_WindowsLib` and `../JQB_CAMCommon`.
+> **Note**: Clipper2 is auto-downloaded by the JQB_CAMCommon library manifest (`library.json` → `build.extraScript`) when `lib/Clipper2` is missing.
 
 ---
 
@@ -594,3 +594,5 @@ When making changes to this project, **always update these files**:
 
 - **`.github/copilot-instructions.md`** (this file) — when adding/removing modules, changing data structures, adding config keys, modifying G-Code output format, adding UI components, or changing the architecture
 - **`README.md`** — when adding user-visible features, changing build instructions, or modifying the application workflow
+- **`THIRD_PARTY_NOTICES.md`** — when adding/removing dependencies or changing licensing/distribution obligations
+- **`LICENSE`** — when changing the project's own license
