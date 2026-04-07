@@ -2,270 +2,288 @@
 
 # gerber2gcode
 
-**KiCad Gerber/Drill → G-Code for CNC PCB milling**
+**KiCad fabrication output to CNC-ready G-Code for PCB isolation routing, drilling, and cutout work.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: Windows 10+](https://img.shields.io/badge/Platform-Windows%2010+-0078d4.svg)](https://www.microsoft.com/windows)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
-[![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010+-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build: PlatformIO](https://img.shields.io/badge/Build-PlatformIO-orange.svg)](https://platformio.org/)
 
-Native Windows desktop application for converting KiCad Gerber (RS-274X) and Excellon drill files to FluidNC-compatible G-Code for CNC PCB isolation routing and drilling.
+Native Windows desktop CAM application that converts KiCad Gerber (RS-274X) and Excellon drill files into FluidNC-compatible G-Code for PCB manufacturing workflows.
 
 </div>
 
----
+## What It Does
 
-## Features
+gerber2gcode is built for the common PCB CNC workflow:
 
-- **Multi-layer Gerber parser** — RS-274X with full aperture macro evaluation (AM primitives 1/4/5/7/20/21), regions (G36/G37), arcs (G02/G03), and dark/clear polarity (LPD/LPC)
-- **Excellon drill parser** — tool table, metric/inch auto-conversion, PTH/NPTH separation, via filtering, rout mode support
-- **Clipper2-based isolation** — contour-parallel inward offset toolpaths with configurable overlap and safety offset from copper edge
-- **Real-time GDI preview** — zoomable/pannable canvas with 13 layer types: board outline, copper (top/bottom), mask, silkscreen, paste, clearance, isolation paths, and drill holes
-- **Layer visibility panel** — toggle individual layers on/off for focused inspection, with collapsible dropdown-style sections and nested dropdowns for lower sub-layers (copper sub-components, pad groups, drill diameters)
-- **Drill-only switching** — both the layer panel `Drill Only` item and the top layer-selection dropdown can switch generation to drilling-only G-Code
-- **Polished dark workstation UI** — high-contrast themed numeric fields, wider layer panel with improved readability, and refined spacing/typography for long CAM sessions
-- **Quick action strip** — one-click `Reload`, `Fit`, `Reset`, `Grid`, `All On`, and `Focus` actions for faster preview iteration
-- **Keyboard shortcuts** — `Ctrl+O` open KiCad folder, `Ctrl+G` generate, `Ctrl+R` reload, `Ctrl+L` clear log, `F5` reload, `F6` fit, `F7` grid toggle
-- **Tool presets** — save/load grouped V-bit, combo, drill, and cutout presets with one-click switching, including common PCB sizes such as 30 deg V-bits, 1/64in and 1/32in end mills, 1/16in cutout mills, and micro-drills from 0.30 mm upward
-- **Selective generation** — independent checkboxes for Isolation, Drilling, and Cutout
-- **2-opt TSP path optimization** — nearest-neighbor + 2-opt local improvement for both isolation contours and drill hole ordering, minimizing rapid travel
-- **FluidNC-compatible G-Code** — clean G0/G1/G2/G3 output with conservative arc generation for trusted circular pads, linear-only cutout emission, time estimation, and optional machine bounds checking
-- **Debug BMP export** — re-parses generated G-Code and renders a bitmap for visual verification
-- **KiCad auto-detection** — point at a KiCad fabrication output folder and all layers are detected automatically by filename suffix
+- load a KiCad fabrication folder
+- inspect copper, mask, drill, and outline layers in a native preview
+- generate isolation toolpaths with configurable overlap and offset
+- optimize contour and drill ordering
+- export machine-ready G-Code for FluidNC-style controllers
 
-## Screenshot
+The project focuses on being practical for real bench use: conservative arc generation, strong preview tooling, predictable presets, and minimal operator friction.
 
-*(coming soon)*
+## Highlights
 
-## Quick Start
+### Fabrication Input
 
-### Prerequisites
+- RS-274X Gerber parser with aperture macro support
+- Excellon drill parser with tool table and unit conversion support
+- automatic KiCad layer detection by filename suffix
+- support for top/bottom copper, solder mask, silkscreen, paste, PTH, and NPTH
 
-- [PlatformIO CLI](https://platformio.org/install/cli) or [PlatformIO IDE](https://platformio.org/install/ide) (VS Code extension)
-- Git (used by pre-build script to auto-download Clipper2 if missing)
+### Toolpath Generation
 
-### Build
+- Clipper2-based clearance and offset geometry
+- contour-parallel isolation generation
+- independent isolation, drilling, and cutout generation modes
+- exact circular-pad qualification for safer G2/G3 emission
+- nearest-neighbor + 2-opt ordering for both contours and drill hits
+
+### Operator Workflow
+
+- real-time GDI preview with zoom/pan/grid
+- layer tree with collapsible sections
+- copper sub-layer control for traces, pads, and regions
+- per-aperture pad-group visibility control
+- per-diameter drill visibility control
+- quick actions for reload, fit, reset, grid, focus, and full visibility
+
+### Output
+
+- FluidNC-oriented G-Code
+- isolation, drilling, and cutout sections in one export
+- optional debug BMP re-render from generated G-Code
+- rough job-time estimation
+
+## Why It Is Useful
+
+Most PCB milling utilities either stop at simplistic geometry or hide too much of the job state. gerber2gcode is intentionally explicit:
+
+- you can inspect what the parser understood
+- you can turn sub-layers on and off before generating
+- you can keep presets task-oriented instead of editing raw parameters every run
+- you can export conservative G-Code aimed at practical controller compatibility
+
+## Build
+
+### Requirements
+
+- [PlatformIO CLI](https://platformio.org/install/cli) or PlatformIO for VS Code
+- Git
+- Windows 10+
+
+No manual compiler installation is required when using the intended PlatformIO workflow.
+
+### Build Command
 
 ```bash
-# Clone project
 git clone https://github.com/JAQUBA/gerber2gcode.git
 cd gerber2gcode
-
-# Build
-pio run
+pio run -e windows_x86
 ```
 
-Clipper2 is downloaded automatically on build (if missing) by JQB_CAMCommon library manifest (`library.json` → `build.extraScript`).
+Output binary:
 
-The checked-in `platformio.ini` uses GitHub dependencies for `JQB_WindowsLib` and `JQB_CAMCommon`:
-
-```ini
-lib_deps =
-  https://github.com/JAQUBA/JQB_WindowsLib.git
-  https://github.com/JAQUBA/JQB_CAMCommon.git
+```text
+.pio/build/windows_x86/gerber2gcode.exe
 ```
-
-For local library development in a multi-repo workspace, `platformio.ini` can use:
-
-```ini
-lib_deps =
-  ../JQB_WindowsLib
-  ../JQB_CAMCommon
-```
-
-If PlatformIO cache does not pick up freshly added files in local dependencies,
-remove `./.pio/libdeps/windows_x86/JQB_WindowsLib` or `./.pio/libdeps/windows_x86/JQB_CAMCommon` and rebuild.
-
-The output binary `gerber2gcode.exe` is placed in `.pio/build/windows_x86/`.
-
-> **Note:** C++17, UNICODE, static linking, and Windows library flags are added automatically by the build system. The resulting `.exe` is fully self-contained — no DLLs needed.
 
 ### Dependencies
 
-| Library | Purpose | Integration |
-|---------|---------|-------------|
-| [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) | Win32 UI framework (including `Util/FileDialogs`) | Git dependency in `platformio.ini` (local path optional for multi-repo development) |
-| [JQB_CAMCommon](https://github.com/JAQUBA/JQB_CAMCommon) | Shared CAM utilities (`PathOptimization`, `GCodeFormat`, `ArcMath`, `Geometry`, `RouteStats`) | Git dependency in `platformio.ini` (local path optional for multi-repo development) |
-| [Clipper2](https://github.com/AngusJohnson/Clipper2) | Polygon boolean & offset | Auto-downloaded to `lib/Clipper2` by pre-build script when missing |
+The checked-in `platformio.ini` uses GitHub dependencies for shared libraries:
 
-## Usage
+```ini
+lib_deps =
+    https://github.com/JAQUBA/JQB_WindowsLib.git
+    https://github.com/JAQUBA/JQB_CAMCommon.git
+lib_extra_dirs =
+    lib/Clipper2/CPP
+```
 
-1. **Open KiCad directory** — click "Open KiCad..." and select a folder with Gerber (`.gbr`) and drill (`.drl`) files. Layers are detected automatically by KiCad naming convention.
-2. **Select tool preset** — pick a machining preset from the dropdown. The app automatically applies matching generation mode (Isolation / Combo / Drill / Cutout), feed/depth tool values, overlap/offset defaults, and resets position toggles.
-3. **Choose layer/mode** — use the `Layer` dropdown to select `Auto`, `F_Cu — Top`, `B_Cu — Bottom`, or `Drill`. Choosing `Drill` synchronizes the side panel to drilling-only generation.
-4. **Set laminate thickness** — adjust only the `Mat` field for your board. Other machining fields (feeds/depths/offsets/drill/cutout toggles) are auto-managed and locked to prevent accidental mismatch.
-5. **Use quick actions** — `Reload` to re-parse, `Fit` to frame board, `Reset` to default view, `Grid` to toggle grid, `All On` to reveal all layers, `Focus` for copper-centric inspection
-6. **Select drilling-only mode if needed** — either pick `Drill` in the `Layer` dropdown or click `Drill Only` in the side panel to generate G-Code only for PTH/NPTH drilling without isolation or cutout
-7. **Use collapsible layer sections** — click section headers in the side panel (`▾` / `▸`) to expand or collapse groups and focus on the subset you are currently editing
-8. **Generate** — click "Generate" (or `Ctrl+G`) to compute toolpaths (runs in background thread)
-9. **Preview** — inspect the result in the canvas (scroll to zoom, drag to pan, double-click to reset)
-10. **Export G-Code** — click "Export GCode" to save the `.gcode` file
+Dependency roles:
 
-The `Help → About gerber2gcode...` dialog inside the binary lists the bundled/open-source libraries together with their licenses.
+| Dependency | Role |
+|------------|------|
+| [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) | native Windows UI, dialogs, canvas, tree panel, widgets |
+| [JQB_CAMCommon](https://github.com/JAQUBA/JQB_CAMCommon) | geometry, arc math, G-code formatting, route stats, path optimization |
+| [Clipper2](https://github.com/AngusJohnson/Clipper2) | polygon boolean operations and offsets |
 
-### KiCad File Naming
+Clipper2 is checked automatically during build by JQB_CAMCommon's build hook and downloaded into the consumer workspace if needed.
 
-The application auto-detects layers by filename suffix:
+### Local Multi-Repo Development
 
-| Suffix | Layer |
-|--------|-------|
-| `-Edge_Cuts.gbr` | Board outline *(required)* |
-| `-F_Cu.gbr` / `-B_Cu.gbr` | Copper top / bottom *(at least one required)* |
-| `-F_Mask.gbr` / `-B_Mask.gbr` | Solder mask |
-| `-F_Silkscreen.gbr` / `-B_Silkscreen.gbr` | Silkscreen |
-| `-F_Paste.gbr` / `-B_Paste.gbr` | Solder paste |
-| `-PTH.drl` | Plated through-holes |
-| `-NPTH.drl` | Non-plated through-holes |
+For local development against sibling repos:
+
+```ini
+lib_deps =
+    ../JQB_WindowsLib
+    ../JQB_CAMCommon
+```
+
+If PlatformIO cache holds stale copies of local dependencies, clean the relevant `.pio/libdeps/...` folders before rebuilding.
+
+## Quick Start
+
+1. Open a KiCad fabrication output directory.
+2. Let the application auto-detect Gerber and drill files.
+3. Select a preset matching your tool and workflow.
+4. Set laminate thickness.
+5. Inspect the preview and visible layers.
+6. Generate toolpaths.
+7. Export G-Code.
+
+The application is designed so most workflows revolve around presets and preview inspection, not repetitive manual CAM re-entry.
+
+## User Workflow
+
+### Typical Session
+
+1. **Open KiCad directory** to load fabrication outputs.
+2. **Pick a preset** for isolation, combo, drill-only, or cutout work.
+3. **Select copper side / drill mode** using the top controls.
+4. **Inspect visible layers** using the right-side panel.
+5. **Toggle pad groups or drill diameters** if you want a narrower operation scope.
+6. **Generate** the paths.
+7. **Export** the `.gcode` result.
+
+### Built-In Shortcuts
+
+- `Ctrl+O` open KiCad folder
+- `Ctrl+G` generate G-Code
+- `Ctrl+R` reload project
+- `Ctrl+L` clear log
+- `F5` reload
+- `F6` fit to board
+- `F7` toggle grid
+
+### In-App About Dialog
+
+`Help → About gerber2gcode...` shows the libraries used by the binary together with their licenses.
+
+## Supported Input Naming
+
+The application auto-detects common KiCad output names:
+
+| Suffix | Meaning |
+|--------|---------|
+| `-Edge_Cuts.gbr` | board outline |
+| `-F_Cu.gbr` | top copper |
+| `-B_Cu.gbr` | bottom copper |
+| `-F_Mask.gbr`, `-B_Mask.gbr` | solder mask |
+| `-F_Silkscreen.gbr`, `-B_Silkscreen.gbr` | silkscreen |
+| `-F_Paste.gbr`, `-B_Paste.gbr` | paste |
+| `-PTH.drl` | plated drill hits |
+| `-NPTH.drl` | non-plated drill hits |
+
+At least one copper layer plus `Edge_Cuts` is required for a full PCB routing workflow.
+
+## Presets and Configuration
 
 ### Tool Presets
 
-28 default presets are created on first run.
+The application ships with a broad starter set of presets for:
 
-- Presets are grouped by task type: Isolation, Combo (Isolation + Drill), Drilling, and Cutout.
-- Default feed values are tuned as conservative starting points for FluidNC CNC workflows.
-- V-bits for fine isolation: 20 deg, 30 deg, 45 deg, and 60 deg, including common 0.003in and 0.005in PCB engraving tips.
-- Flat end mills for milling and contour work: 1/64in, 1/32in, 1/16in cutout mill, and 1/8in.
-- Micro-drills from 0.30 mm to 3.20 mm.
-- Each preset stores both engraver parameters and spindle diameter, so drilling warnings and cutout offsets are computed from the spindle tool rather than from the V-bit tip.
+- V-bits for fine PCB isolation
+- end mills for contour work
+- drill bits for hole operations
+- cutout workflows
 
-## Architecture
+Presets bundle the values that should move together: generation mode, feeds, depths, overlap, offsets, spindle diameter, and related options.
 
-```
+### Persistent Files
+
+Settings are persisted next to the executable:
+
+- `gerber2gcode.ini` for project and workflow state
+- `tools.ini` for tool presets
+
+## Architecture Overview
+
+```text
 src/
-├── main.cpp                    # Entry point — init(), setup(), loop()
-├── AppState.h / .cpp           # Global state, settings, tool presets, shared actions
-├── AppUI.h / .cpp              # Toolbar, canvas, layer panel, resize handler
-├── Canvas/
-│   └── PCBCanvas.h / .cpp      # CanvasWindow subclass — GDI PCB rendering
-├── Config/
-│   └── Config.h / .cpp         # MachineConfig, CamConfig, JobConfig structs
-├── Gerber/
-│   └── GerberParser.h / .cpp   # RS-274X Gerber parser → Clipper2 polygons
-├── Drill/
-│   └── DrillParser.h / .cpp    # Excellon drill parser
-├── Geometry/
-│   └── Geometry.h / .cpp       # geo:: namespace — re-export of JQB_CAMCommon Geometry module
-├── Toolpath/
-│   └── Toolpath.h / .cpp       # Contour-parallel isolation + 2-opt TSP ordering + exact-circle metadata
-├── GCode/
-│   └── GCodeGen.h / .cpp       # G-Code generator + exact circular-pad arc emission + drill ordering + time estimation
-├── Pipeline/
-│   └── Pipeline.h / .cpp       # Orchestration: detect → parse → isolate → classify exact circles → generate
-└── Debug/
-    └── DebugImage.h / .cpp     # Debug BMP output (re-parses G-Code for validation)
-
-lib/
-└── Clipper2/                   # Auto-downloaded local copy used by JQB_CAMCommon Geometry
+├── main.cpp
+├── AppState.h / AppState.cpp
+├── AppUI.h / AppUI.cpp
+├── Canvas/PCBCanvas.h / PCBCanvas.cpp
+├── Config/Config.h / Config.cpp
+├── Gerber/GerberParser.h / GerberParser.cpp
+├── Drill/DrillParser.h / DrillParser.cpp
+├── Geometry/Geometry.h / Geometry.cpp
+├── Toolpath/Toolpath.h / Toolpath.cpp
+├── GCode/GCodeGen.h / GCodeGen.cpp
+├── Pipeline/Pipeline.h / Pipeline.cpp
+└── Debug/DebugImage.h / DebugImage.cpp
 ```
 
-`JQB_CAMCommon` is consumed as an external PlatformIO dependency. It provides shared CAM modules such as `Geometry`, `PathOptimization`, `ArcMath`, `GCodeFormat`, and `RouteStats`.
+Pipeline summary:
 
-### Processing Pipeline
+1. detect input files
+2. parse outline, copper, and drill layers
+3. normalize board coordinates
+4. compute clearance and offsets
+5. optimize contour and drill order
+6. emit G-Code
+7. optionally emit debug BMP
 
-```
-KiCad fabrication folder
-  │
-  ├─ detectKicadFiles()         auto-detect layers by suffix
-  ├─ parseBoardOutline()        Edge_Cuts → board outline
-  ├─ parseGerber() × N          copper, mask, silk, paste → Clipper2 polygons
-  ├─ parseDrill() × 2           PTH + NPTH → drill holes
-  ├─ normalize to (0,0)         shift origin, optional mirror for B_Cu
-  ├─ clip copper to outline     intersect with board boundary
-  ├─ clearance = outline - copper
-  │
-  ├─ generateToolpath()         contour-parallel inward offset
-  ├─ markArcEligible()          exact circular-pad match (conservative)
-  ├─ orderContours()            nearest-neighbor + 2-opt TSP
-  ├─ orderDrillHoles()          nearest-neighbor + 2-opt TSP
-  ├─ generateGCode()            FluidNC-compatible G0/G1/G2/G3
-  │
-  └─ generateDebugBMP()         optional visual verification
-```
+## Output Format
 
-## G-Code Output
+gerber2gcode targets FluidNC-compatible motion output with explicit modal setup and conservative section ordering.
 
-FluidNC-compatible format with explicit modal reset preamble, exact two-semicircle output for trusted full circular pad-offset loops, and safe spindle sequencing for drilling/cutout sections:
+Example:
 
 ```gcode
-; gerber2gcode — CNC PCB isolation engraving
-G21 ; mm
-G90 ; absolute
-G17 ; XY plane
-G94 ; feed per minute
-G54 ; work offset
-G40 ; cancel cutter compensation
-G49 ; cancel tool length offset
-G80 ; cancel canned cycles
-M5 ; spindle off
-; post profile: FluidNC
-G0 Z6.500 ; initial safe Z
-
-; === Engraver: isolation milling ===
+G21
+G90
+G17
+G94
+G54
+M5
 G0 Z6.500
+
+; isolation
 G0 X10.000 Y20.000
 G1 Z1.450 F100
 G1 X15.000 Y20.000 F300
-G0 Z6.500
 
-; === Drilling ===
-M3 S255 ; spindle on
-G4 P1.0 ; spindle settle
+; drilling
+M3 S255
+G4 P1.0
 G0 X5.000 Y10.000
-G1 Z2.500 F2400
 G1 Z0.000 F50
-G1 Z2.500 F50
-G0 Z6.500
-
-G0 Z6.500
-G0 X0 Y0
-M5 ; spindle off
-M2 ; program end
+M5
+M2
 ```
 
-Generator always emits a FluidNC-oriented footer:
-
-```gcode
-M5 ; spindle off
-M2 ; program end
-```
-
-## Configuration Files
-
-The application persists settings across sessions in two INI files (created automatically next to the `.exe`):
-
-- **`gerber2gcode.ini`** — last used paths, engraver/drill parameters, overlap/offset, checkboxes
-- **`tools.ini`** — saved tool presets with engraver/spindle values, feeds, overlap/offset, and preset-specific position/filter defaults (X/Y, Flip, No Vias, Debug)
-
-`gerber2gcode.ini` stores machining and workflow state used by the FluidNC output pipeline.
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Commit your changes (`git commit -am 'Add my feature'`)
-4. Push to the branch (`git push origin feature/my-feature`)
-5. Open a Pull Request
-
-### Development Notes
-
-- Built with [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) — an Arduino-style Win32 UI framework
-- Geometry operations use [Clipper2](https://github.com/AngusJohnson/Clipper2) (Angus Johnson's polygon library)
-- See [`.github/copilot-instructions.md`](.github/copilot-instructions.md) for detailed architecture documentation and coding guidelines
-
-## License
+## Open Source and Licensing
 
 The source code in this repository is licensed under the [MIT License](LICENSE).
 
-This repository also depends on third-party components with separate licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.
+The resulting binaries also depend on third-party components with their own licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Important: while this repository's own source files are MIT-licensed, distributed binaries must also comply with the licenses of linked dependencies (currently LGPL for JQB_WindowsLib and JQB_CAMCommon, plus BSL-1.0 for Clipper2).
+Current dependency licensing model:
 
-Because the current build uses static linking, a compliant distribution should also include the required third-party license texts and a practical LGPL relinking path for JQB_WindowsLib and JQB_CAMCommon (for example relinkable object files or an equivalent mechanism).
+- JQB_WindowsLib — LGPL-3.0-or-later
+- JQB_CAMCommon — LGPL-3.0-or-later
+- Clipper2 — Boost Software License 1.0
+
+Because the current build uses static linking, compliant binary distribution should also provide required third-party license texts and a practical relinking path for the LGPL libraries.
+
+## Contributing
+
+Contributions are welcome.
+
+When changing architecture, build flow, UI behavior, tool presets, generation logic, or dependency/licensing behavior, keep the following synchronized:
+
+- [README.md](README.md)
+- [.github/copilot-instructions.md](.github/copilot-instructions.md)
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ## Acknowledgments
 
-- [Clipper2](https://github.com/AngusJohnson/Clipper2) by Angus Johnson — polygon boolean operations and offsetting
-- [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) — lightweight Win32 UI framework
-- Inspired by [FlatCAM](http://flatcam.org/) and the PCB isolation routing community
+- [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib)
+- [JQB_CAMCommon](https://github.com/JAQUBA/JQB_CAMCommon)
+- [Clipper2](https://github.com/AngusJohnson/Clipper2)
+- the PCB CNC / isolation-routing community and KiCad fabrication workflow ecosystem
