@@ -8,11 +8,12 @@
 #include "Pipeline/Pipeline.h"
 
 #include <Core.h>
+#include <Util/FileDialogs.h>
+#include <Util/NumberUtils.h>
 #include <Util/StringUtils.h>
+#include <Util/TimerUtils.h>
 
 #include <windows.h>
-#include <commdlg.h>
-#include <shellapi.h>
 
 #include <string>
 #include <vector>
@@ -68,7 +69,20 @@ volatile bool  g_isRunning     = false;
 std::string    g_lastKicadDir;
 
 HWND           g_hLayerPanel   = nullptr;
-std::vector<LayerPanelItem> g_layerItems;
+TreePanel*     g_treePanel     = nullptr;
+
+// Layer panel collapsible section states
+static bool g_lpBoardExpanded     = true;
+static bool g_lpCopperExpanded    = true;
+static bool g_lpLayersExpanded    = false;
+static bool g_lpDrillsExpanded    = true;
+static bool g_lpGeneratedExpanded = true;
+static bool g_lpCopperTopSubExpanded    = true;
+static bool g_lpCopperBottomSubExpanded = true;
+static bool g_lpCopperTopPadsExpanded   = true;
+static bool g_lpCopperBottomPadsExpanded = true;
+static bool g_lpPthDiametersExpanded    = true;
+static bool g_lpNpthDiametersExpanded   = true;
 
 // Option flags (controlled via Options menu, preset-initialised)
 CopperSide g_copperSide         = CopperSide::Auto;
@@ -104,10 +118,9 @@ static std::string intStr(int val) {
 }
 
 static double parseD(const std::string& s) {
-    if (s.empty()) return 0.0;
-    std::string tmp = s;
-    std::replace(tmp.begin(), tmp.end(), ',', '.');
-    return std::strtod(tmp.c_str(), nullptr);
+    double out = 0.0;
+    NumberUtils::tryParseDouble(s, out);
+    return out;
 }
 
 static std::string lowerAscii(std::string s) {
@@ -907,138 +920,151 @@ Config buildConfigFromGUI() {
 // ════════════════════════════════════════════════════════════════════════════
 
 void rebuildLayerPanel() {
-    if (!g_hLayerPanel || !g_canvas) return;
-    SendMessageW(g_hLayerPanel, LB_RESETCONTENT, 0, 0);
-    g_layerItems.clear();
+    if (!g_treePanel || !g_canvas) return;
 
-    auto& lay = g_canvas->layers();
+    auto& lay  = g_canvas->layers();
     auto& pres = g_canvas->presence();
 
-    // Each item is either a section header (non-clickable) or a toggleable layer.
-    // g_layerItems maps listbox indices to bool* toggle targets.
+    g_treePanel->clear();
 
-    auto addSection = [](const wchar_t* name) {
-        std::wstring text = L"\u2500\u2500 ";
-        text += name;
-        text += L" \u2500\u2500";
-        SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
-        g_layerItems.push_back({true, nullptr});
-    };
+        // ── Board ──
+        g_treePanel->addSection(L"Board", &g_lpBoardExpanded);
+        if (g_lpBoardExpanded)
+            g_treePanel->addItem(L"Board Outline", &lay.outline);
 
-    auto addItem = [](const wchar_t* name, bool visible, bool* flag) {
-        std::wstring text = visible ? L"  \u2611 " : L"  \u2610 ";
-        text += name;
-        SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
-        g_layerItems.push_back({false, flag, LayerPanelAction::ToggleFlag});
-    };
-
-    auto addActionItem = [](const wchar_t* name, bool active, LayerPanelAction action) {
-        std::wstring text = active ? L"  \u2611 " : L"  \u2610 ";
-        text += name;
-        SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
-        g_layerItems.push_back({false, nullptr, action});
-    };
-
-    auto addSubItem = [](const wchar_t* name, bool visible, bool* flag) {
-        std::wstring text = visible ? L"      \u2611 " : L"      \u2610 ";
-        text += name;
-        SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
-        g_layerItems.push_back({false, flag});
-    };
-
-    auto addSubSubItem = [](const wchar_t* name, bool visible, bool* flag) {
-        std::wstring text = visible ? L"          \u2611 " : L"          \u2610 ";
-        text += name;
-        SendMessageW(g_hLayerPanel, LB_ADDSTRING, 0, (LPARAM)text.c_str());
-        g_layerItems.push_back({false, flag});
-    };
-
-    // ── Board ──
-    addSection(L"Board");
-    addItem(L"Board Outline", lay.outline, &lay.outline);
-
-    // ── Copper ──
-    if (pres.copperTop || pres.copperBottom) {
-        addSection(L"Copper");
-        if (pres.copperTop) {
-            addItem(L"Copper Top (F_Cu)", lay.copperTop, &lay.copperTop);
-            if (pres.copperTopSub.traces)  addSubItem(L"Traces",  lay.copperTopSub.traces,  &lay.copperTopSub.traces);
-            if (pres.copperTopSub.pads) {
-                addSubItem(L"Pads", lay.copperTopSub.pads, &lay.copperTopSub.pads);
-                auto* pgTop = g_canvas->copperTopPadGroups();
-                if (pgTop) {
-                    for (auto& pg : *pgTop) {
-                        std::wstring wname = StringUtils::utf8ToWide(pg.name);
-                        wchar_t buf[128];
-                        _snwprintf(buf, 128, L"%ls (%d)", wname.c_str(), pg.count);
-                        addSubSubItem(buf, pg.visible, &pg.visible);
+        // ── Copper ──
+        if (pres.copperTop || pres.copperBottom) {
+            g_treePanel->addSection(L"Copper", &g_lpCopperExpanded);
+            if (g_lpCopperExpanded) {
+                if (pres.copperTop) {
+                    g_treePanel->addItem(L"Copper Top (F_Cu)", &lay.copperTop);
+                    auto* pgTop = g_canvas->copperTopPadGroups();
+                    bool hasTopPadGroups = pgTop && !pgTop->empty();
+                    bool hasTopSub = pres.copperTopSub.traces || pres.copperTopSub.pads ||
+                                     pres.copperTopSub.regions || hasTopPadGroups;
+                    if (hasTopSub) {
+                        g_treePanel->addExpandGroup(L"Top Sub-layers", &g_lpCopperTopSubExpanded);
+                        if (g_lpCopperTopSubExpanded) {
+                            if (pres.copperTopSub.traces)
+                                g_treePanel->addItem(L"Traces", &lay.copperTopSub.traces, 2, doRecomputeClearance);
+                            if (pres.copperTopSub.pads) {
+                                g_treePanel->addItem(L"Pads", &lay.copperTopSub.pads, 2, doRecomputeClearance);
+                                if (hasTopPadGroups) {
+                                    g_treePanel->addExpandGroup(L"Pad Groups", &g_lpCopperTopPadsExpanded, 2);
+                                    if (g_lpCopperTopPadsExpanded) {
+                                        for (auto& pg : *pgTop) {
+                                            std::wstring wn = StringUtils::utf8ToWide(pg.name);
+                                            wchar_t buf[128];
+                                            _snwprintf(buf, 128, L"%ls (%d)", wn.c_str(), pg.count);
+                                            g_treePanel->addItem(buf, &pg.visible, 3, doRecomputeClearance);
+                                        }
+                                    }
+                                }
+                            }
+                            if (pres.copperTopSub.regions)
+                                g_treePanel->addItem(L"Regions", &lay.copperTopSub.regions, 2, doRecomputeClearance);
+                        }
+                    }
+                }
+                if (pres.copperBottom) {
+                    g_treePanel->addItem(L"Copper Bottom (B_Cu)", &lay.copperBottom);
+                    auto* pgBot = g_canvas->copperBottomPadGroups();
+                    bool hasBotPadGroups = pgBot && !pgBot->empty();
+                    bool hasBotSub = pres.copperBottomSub.traces || pres.copperBottomSub.pads ||
+                                     pres.copperBottomSub.regions || hasBotPadGroups;
+                    if (hasBotSub) {
+                        g_treePanel->addExpandGroup(L"Bottom Sub-layers", &g_lpCopperBottomSubExpanded);
+                        if (g_lpCopperBottomSubExpanded) {
+                            if (pres.copperBottomSub.traces)
+                                g_treePanel->addItem(L"Traces", &lay.copperBottomSub.traces, 2, doRecomputeClearance);
+                            if (pres.copperBottomSub.pads) {
+                                g_treePanel->addItem(L"Pads", &lay.copperBottomSub.pads, 2, doRecomputeClearance);
+                                if (hasBotPadGroups) {
+                                    g_treePanel->addExpandGroup(L"Pad Groups", &g_lpCopperBottomPadsExpanded, 2);
+                                    if (g_lpCopperBottomPadsExpanded) {
+                                        for (auto& pg : *pgBot) {
+                                            std::wstring wn = StringUtils::utf8ToWide(pg.name);
+                                            wchar_t buf[128];
+                                            _snwprintf(buf, 128, L"%ls (%d)", wn.c_str(), pg.count);
+                                            g_treePanel->addItem(buf, &pg.visible, 3, doRecomputeClearance);
+                                        }
+                                    }
+                                }
+                            }
+                            if (pres.copperBottomSub.regions)
+                                g_treePanel->addItem(L"Regions", &lay.copperBottomSub.regions, 2, doRecomputeClearance);
+                        }
                     }
                 }
             }
-            if (pres.copperTopSub.regions) addSubItem(L"Regions", lay.copperTopSub.regions, &lay.copperTopSub.regions);
         }
-        if (pres.copperBottom) {
-            addItem(L"Copper Bottom (B_Cu)", lay.copperBottom, &lay.copperBottom);
-            if (pres.copperBottomSub.traces)  addSubItem(L"Traces",  lay.copperBottomSub.traces,  &lay.copperBottomSub.traces);
-            if (pres.copperBottomSub.pads) {
-                addSubItem(L"Pads", lay.copperBottomSub.pads, &lay.copperBottomSub.pads);
-                auto* pgBot = g_canvas->copperBottomPadGroups();
-                if (pgBot) {
-                    for (auto& pg : *pgBot) {
-                        std::wstring wname = StringUtils::utf8ToWide(pg.name);
-                        wchar_t buf[128];
-                        _snwprintf(buf, 128, L"%ls (%d)", wname.c_str(), pg.count);
-                        addSubSubItem(buf, pg.visible, &pg.visible);
+
+        // ── Layers ──
+        if (pres.maskTop || pres.maskBottom || pres.silkTop || pres.silkBottom ||
+            pres.pasteTop || pres.pasteBottom) {
+            g_treePanel->addSection(L"Layers", &g_lpLayersExpanded);
+            if (g_lpLayersExpanded) {
+                if (pres.maskTop)     g_treePanel->addItem(L"Mask Top",       &lay.maskTop);
+                if (pres.maskBottom)  g_treePanel->addItem(L"Mask Bottom",    &lay.maskBottom);
+                if (pres.silkTop)     g_treePanel->addItem(L"Silkscreen Top", &lay.silkTop);
+                if (pres.silkBottom)  g_treePanel->addItem(L"Silkscreen Bot", &lay.silkBottom);
+                if (pres.pasteTop)    g_treePanel->addItem(L"Paste Top",      &lay.pasteTop);
+                if (pres.pasteBottom) g_treePanel->addItem(L"Paste Bottom",   &lay.pasteBottom);
+            }
+        }
+
+        // ── Drills with per-diameter sub-items ──
+        if (pres.drillsPTH || pres.drillsNPTH) {
+            g_treePanel->addSection(L"Drills", &g_lpDrillsExpanded);
+            if (g_lpDrillsExpanded) {
+                if (pres.drillsPTH) {
+                    g_treePanel->addItem(L"PTH Drills", &lay.drillsPTH);
+                    auto& pth = g_canvas->drillFilterPTH();
+                    if (!pth.empty()) {
+                        g_treePanel->addExpandGroup(L"Diameters", &g_lpPthDiametersExpanded);
+                        if (g_lpPthDiametersExpanded) {
+                            for (auto& f : pth) {
+                                wchar_t buf[64];
+                                _snwprintf(buf, 64, L"\u00D8%.3fmm (%d)", f.diameter, f.count);
+                                g_treePanel->addItem(buf, &f.visible, 2);
+                            }
+                        }
+                    }
+                }
+                if (pres.drillsNPTH) {
+                    g_treePanel->addItem(L"NPTH Drills", &lay.drillsNPTH);
+                    auto& npth = g_canvas->drillFilterNPTH();
+                    if (!npth.empty()) {
+                        g_treePanel->addExpandGroup(L"Diameters", &g_lpNpthDiametersExpanded);
+                        if (g_lpNpthDiametersExpanded) {
+                            for (auto& f : npth) {
+                                wchar_t buf[64];
+                                _snwprintf(buf, 64, L"\u00D8%.3fmm (%d)", f.diameter, f.count);
+                                g_treePanel->addItem(buf, &f.visible, 2);
+                            }
+                        }
                     }
                 }
             }
-            if (pres.copperBottomSub.regions) addSubItem(L"Regions", lay.copperBottomSub.regions, &lay.copperBottomSub.regions);
         }
-    }
 
-    // ── Layers ──
-    if (pres.maskTop || pres.maskBottom || pres.silkTop || pres.silkBottom ||
-        pres.pasteTop || pres.pasteBottom) {
-        addSection(L"Layers");
-        if (pres.maskTop)      addItem(L"Mask Top",       lay.maskTop,      &lay.maskTop);
-        if (pres.maskBottom)   addItem(L"Mask Bottom",    lay.maskBottom,   &lay.maskBottom);
-        if (pres.silkTop)      addItem(L"Silkscreen Top", lay.silkTop,      &lay.silkTop);
-        if (pres.silkBottom)   addItem(L"Silkscreen Bot", lay.silkBottom,   &lay.silkBottom);
-        if (pres.pasteTop)     addItem(L"Paste Top",      lay.pasteTop,     &lay.pasteTop);
-        if (pres.pasteBottom)  addItem(L"Paste Bottom",   lay.pasteBottom,  &lay.pasteBottom);
-    }
-
-    // ── Drills with per-diameter sub-items ──
-    if (pres.drillsPTH || pres.drillsNPTH) {
-        addSection(L"Drills");
-        if (pres.drillsPTH) {
-            addItem(L"PTH Drills", lay.drillsPTH, &lay.drillsPTH);
-            for (auto& f : g_canvas->drillFilterPTH()) {
-                wchar_t buf[64];
-                _snwprintf(buf, 64, L"\u00D8%.3fmm (%d)", f.diameter, f.count);
-                addSubItem(buf, f.visible, &f.visible);
+        // ── Generated ──
+        if (pres.clearance || pres.isolation || pres.cutout || pres.drillsPTH || pres.drillsNPTH) {
+            g_treePanel->addSection(L"Generated", &g_lpGeneratedExpanded);
+            if (g_lpGeneratedExpanded) {
+                bool drillOnly = (lay.drillsPTH || lay.drillsNPTH) && !lay.isolation && !lay.cutout;
+                if (pres.drillsPTH || pres.drillsNPTH)
+                    g_treePanel->addActionItem(L"Drill Only", drillOnly,
+                                              selectDrillOnlyModeFromLayerPanel);
+                if (pres.clearance)  g_treePanel->addItem(L"Clearance",       &lay.clearance);
+                if (pres.isolation)  g_treePanel->addItem(L"Isolation Paths", &lay.isolation);
+                if (pres.cutout)
+                    g_treePanel->addItem(L"Cutout", &lay.cutout, 1, []{
+                        if (g_chkCutout && g_canvas)
+                            g_chkCutout->setChecked(g_canvas->layers().cutout);
+                    });
             }
         }
-        if (pres.drillsNPTH) {
-            addItem(L"NPTH Drills", lay.drillsNPTH, &lay.drillsNPTH);
-            for (auto& f : g_canvas->drillFilterNPTH()) {
-                wchar_t buf[64];
-                _snwprintf(buf, 64, L"\u00D8%.3fmm (%d)", f.diameter, f.count);
-                addSubItem(buf, f.visible, &f.visible);
-            }
-        }
-    }
-
-    // ── Generated ──
-    if (pres.clearance || pres.isolation || pres.cutout || pres.drillsPTH || pres.drillsNPTH) {
-        addSection(L"Generated");
-        bool drillOnly = (lay.drillsPTH || lay.drillsNPTH) && !lay.isolation && !lay.cutout;
-        if (pres.drillsPTH || pres.drillsNPTH)
-            addActionItem(L"Drill Only", drillOnly, LayerPanelAction::SelectDrillOnlyMode);
-        if (pres.clearance)    addItem(L"Clearance",       lay.clearance,  &lay.clearance);
-        if (pres.isolation)    addItem(L"Isolation Paths", lay.isolation,  &lay.isolation);
-        if (pres.cutout)       addItem(L"Cutout",          lay.cutout,     &lay.cutout);
-    }
 }
 
 void selectDrillOnlyModeFromLayerPanel() {
@@ -1105,8 +1131,7 @@ void syncLayerPanelWithCopperSideSelection() {
 void scheduleAutoRefresh(bool reparse) {
     if (reparse) g_needsReparse = true;
     if (!g_window) return;
-    KillTimer(g_window->getHandle(), TIMER_AUTO_REFRESH);
-    SetTimer(g_window->getHandle(), TIMER_AUTO_REFRESH, AUTO_REFRESH_DELAY, NULL);
+    TimerUtils::restartDebounceTimer(g_window->getHandle(), TIMER_AUTO_REFRESH, AUTO_REFRESH_DELAY);
 }
 
 void doRefreshIsolation() {
@@ -1351,18 +1376,12 @@ void doGenerate() {
     // If no output file set, prompt user
     std::string outPath = g_fldOutputFile ? g_fldOutputFile->getText() : "";
     if (outPath.empty() && g_window) {
-        wchar_t file[MAX_PATH] = {};
-        OPENFILENAMEW ofn = {};
-        ofn.lStructSize = sizeof(ofn);
-        ofn.hwndOwner   = g_window->getHandle();
-        ofn.lpstrFilter = L"GCode (*.gcode)\0*.gcode\0All (*.*)\0*.*\0";
-        ofn.lpstrFile   = file;
-        ofn.nMaxFile    = MAX_PATH;
-        ofn.lpstrTitle  = L"Save GCode";
-        ofn.lpstrDefExt = L"gcode";
-        ofn.Flags       = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-        if (GetSaveFileNameW(&ofn)) {
-            std::string path = StringUtils::wideToUtf8(file);
+        std::string path = FileDialogs::saveFileDialogUTF8(
+            g_window->getHandle(),
+            L"GCode (*.gcode)\0*.gcode\0All (*.*)\0*.*\0",
+            L"Save GCode",
+            L"gcode");
+        if (!path.empty()) {
             if (g_fldOutputFile) g_fldOutputFile->setText(path.c_str());
         } else {
             return; // user cancelled

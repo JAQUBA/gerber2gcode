@@ -1,4 +1,4 @@
-# Copilot Instructions — gerber2gcode
+﻿# Copilot Instructions — gerber2gcode
 
 > **IMPORTANT:** Keep this file and `README.md` up to date whenever you add, rename, or remove modules, change data structures, add UI components, modify G-Code output, or change configuration keys.
 
@@ -23,7 +23,7 @@ gerber2gcode/
 │   ├── Drill/
 │   │   └── DrillParser.h / .cpp    # Excellon drill parser → DrillHole vector
 │   ├── Geometry/
-│   │   └── Geometry.h / .cpp       # geo:: namespace — Clipper2 wrappers, shape generators, boolean ops
+│   │   └── Geometry.h / .cpp       # geo:: namespace — Re-exports from JQB_CAMCommon Geometry module
 │   ├── Toolpath/
 │   │   └── Toolpath.h / .cpp       # Contour-parallel isolation generator + 2-opt contour ordering
 │   ├── GCode/
@@ -40,20 +40,31 @@ gerber2gcode/
 └── platformio.ini                 # PlatformIO config (JQB_MinGW platform)
 ```
 
+#### External Libraries (via lib_deps)
+
+- **JQB_CAMCommon** (`../JQB_CAMCommon`) — Reusable utilities shared across CAM modules:
+  - `PathOptimization` (generic nearest-neighbor + 2-opt for points and reversible chains)
+  - `GCodeFormat` (consistent XY/Z/F/IJ/S token formatting helpers)
+  - `ArcMath` (shared circle fit, point-line distance, and turn-angle primitives for arc fitting)
+  - `Geometry` (universal shape/boolean operations via Clipper2)
+  - `RouteStats` (rapid/cut distance accumulator + `estimateTimeSec()`)
+  - Repository: https://github.com/JAQUBA/JQB_CAMCommon
+
+
 ### Module Responsibilities
 
 | Module | Responsibility |
 |--------|---------------|
 | **main.cpp** | `init()` (COM init), `setup()` (window + menu + UI + canvas), `loop()` (empty — event-driven). Minimal, delegates everything. |
-| **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). `applyActiveToolPreset()` auto-applies tool kind workflow: generation mode mapping (Isolation / Combo / Drill / Cutout), CAM defaults (overlap/offset), XY/flip/via reset, and redraw/reparse scheduling. Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates + `doRecomputeClearance()` for copper sub-layer visibility changes. Layer panel: `rebuildLayerPanel()`, including a `Drill Only` action that switches generation to drilling-only G-Code. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
-| **AppUI** | `createUI(SimpleWindow*)` — polished 4-row toolbar with section headers (Project / Machining / Position), styled action buttons, themed numeric fields, canvas, wider layer panel, log area, progress bar, and quick-action strip (`Reload`, `Fit`, `Reset`, `Grid`, `All On`, `Focus`). `doResize(w, h)` — dynamic layout. Button styling helpers. Browse/save file dialog wrappers. Auto-managed machining controls (feeds/depths/overlap/offset/drill/XY/Flip/No Vias/Debug/Eng M3/Dwell) are read-only or disabled; workflow expects selecting a tool preset and editing mainly `Mat` (material thickness). Arcs toggle controls G2/G3 arc fitting. Browse KiCad button immediately loads and previews the selected directory. Main window keyboard shortcuts: `Ctrl+O`, `Ctrl+G`, `Ctrl+R`, `Ctrl+L`, `F5`, `F6`, `F7`. The `Layer` dropdown supports `Auto`, `F_Cu — Top`, `B_Cu — Bottom`, and `Drill`; choosing `Drill` synchronizes the side panel to drilling-only generation. Layer panel click handling also supports the `Drill Only` action item. |
+| **AppState** | Global state (`g_window`, `g_canvas`, `g_logArea`, `g_progressBar`, `g_pipelineData`, all UI field pointers). `ToolPreset` struct. `loadSettings()` / `saveSettings()`. Tool preset management (`loadToolPresets`, `saveToolPresets`, `applyActiveToolPreset`, `doSelectTool`, `showToolPopup`, `doShowToolPresets`). `applyActiveToolPreset()` auto-applies tool kind workflow: generation mode mapping (Isolation / Combo / Drill / Cutout), CAM defaults (overlap/offset), XY/flip/via reset, and redraw/reparse scheduling. Input field → Config conversion (`buildConfigFromGUI`). Shared actions: `doLoadKicadDir()`, `doGenerate()`, `doExportGCode()`. Auto-refresh: `scheduleAutoRefresh(bool)` debounce timer (400ms) + `doRefreshIsolation()` for isolation-only preview updates + `doRecomputeClearance()` for copper sub-layer visibility changes. Layer panel: `rebuildLayerPanel()` — uses `TreePanel` widget (`g_treePanel`, JQB_WindowsLib `UI/TreePanel`) with `onToggle` callbacks; `Drill Only` action item triggers `selectDrillOnlyModeFromLayerPanel()`. Resize: `installResizeHandler()`. Logging: `logMsg()`. |
+| **AppUI** | `createUI(SimpleWindow*)` — polished 4-row toolbar with section headers (Project / Machining / Position), styled action buttons, themed numeric fields, canvas, wider layer panel, log area, progress bar, and quick-action strip (`Reload`, `Fit`, `Reset`, `Grid`, `All On`, `Focus`). `doResize(w, h)` — dynamic layout. Button styling helpers. Uses JQB_WindowsLib `Util/FileDialogs` for folder/save dialogs. Auto-managed machining controls (feeds/depths/overlap/offset/drill/XY/Flip/No Vias/Debug/Eng M3/Dwell) are read-only or disabled; workflow expects selecting a tool preset and editing mainly `Mat` (material thickness). Arcs toggle controls G2/G3 arc fitting. Browse KiCad button immediately loads and previews the selected directory. Main window keyboard shortcuts: `Ctrl+O`, `Ctrl+G`, `Ctrl+R`, `Ctrl+L`, `F5`, `F6`, `F7`. The `Layer` dropdown supports `Auto`, `F_Cu — Top`, `B_Cu — Bottom`, and `Drill`; choosing `Drill` synchronizes the side panel to drilling-only generation. Layer panel click handling also supports the `Drill Only` action item. |
 | **PCBCanvas** | Subclass of JQB_WindowsLib `CanvasWindow` — renders board outline, copper layers (top/bottom) with per-component sub-layers (traces/pads/regions in distinct color shades), mask, silk, paste, clearance, isolation contours, drill holes with center marks. `LayerVisibility` / `LayerPresence` with `CopperSubVis` / `CopperSubPresence` structs. `DrillFilter` groups holes by diameter for per-diameter visibility. `zoomToFit()`. Back-to-front rendering order. |
 | **Config** | `Config` struct with `MachineConfig` (engraver Z, tip width, drill Z, feedrates, offsets), `CamConfig` (overlap, offset), `JobConfig` (engraver/spindle/laser feedrates). `loadConfig()` — minimal JSON parser. |
+| **Geometry** | `geo::` namespace — Re-exports universal functions from JQB_CAMCommon `Geometry` module (Clipper2-based). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
 | **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Two output modes: `parseGerber()` → `geo::Paths` (flat union), `parseGerberComponents()` → `GerberComponents` (categorized: traces=D01, pads=D03, regions=G36/G37). `PadGroup` struct groups D03 flashes by aperture D-code with human-readable names (e.g. "Circle Ø0.800mm", "Rect 1.27×0.64mm"), `isCircular` flag (Circle aperture), `apertureRadius`, and `centers` (D03 flash positions). `GerberComponents::combined()` unions all categories. `GerberComponents::visiblePads()` unions only visible pad groups. |
 | **DrillParser** | Excellon parser: tool table (`TnnCdia`), coordinates, METRIC/INCH units, rout mode (M15/M16), slotted holes (G85 — skipped), via filtering. Outputs `std::vector<DrillHole>`. |
-| **Geometry** | `geo::` namespace — Clipper2 type aliases (`Point`, `Path`, `Paths`). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
 | **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. `ToolpathContour` stores `arcEligible` plus exact-circle metadata (`hasExactCircle`, `arcCenterX/Y`, `arcRadius`) set by `markArcEligible()`. |
-| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — FluidNC-compatible G0/G1/G2/G3 output with isolation + drilling + cutout sections. Full circular pad-offset contours emit as two exact semicircle commands using stored center/radius metadata; non-qualified contours remain G1. Configurable via `use_arcs` (isolation only). Cutout is emitted as G1-only for robustness. Multi-pass depth cutting for cutout. Optional engraver spindle (M3) before isolation. Optional drill dwell (G4) at hole bottom. G28 return to home at program end. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
+| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — FluidNC-compatible G0/G1/G2/G3 output with isolation + drilling + cutout sections. Full circular pad-offset contours emit as two exact semicircle commands using stored center/radius metadata; non-qualified contours remain G1. Configurable via `use_arcs` (isolation only). Cutout is emitted as G1-only for robustness. Multi-pass depth cutting for cutout. Optional engraver spindle (M3) before isolation. Optional drill dwell (G4) at hole bottom. G28 return to home at program end. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — accumulates `routestats::RouteStats` and delegates to `estimateTimeSec()`. |
 | **Pipeline** | `detectKicadFiles(dir)` — auto-detect layers by filename suffix. `runPipeline(params, log, result)` — full workflow (parse → normalize → clip → isolate → mark arc eligibility → order → generate → export). `parsePipelineData(params, log)` — parse-only for live preview. `markArcEligible(contours, circPads, tolerance)` — matches contours to known circular pad centers, validates radial spread against that exact center, and stores exact-circle metadata for robust G2/G3 output. `CircPadInfo` — circular pad center + radius from Gerber parsing. |
 | **DebugImage** | `generateDebugBMP(gcodePath, outputPath, config, holes)` — re-parses G-Code, renders as 24-bit BMP for visual validation. |
 
@@ -62,6 +73,7 @@ gerber2gcode/
 - **Language**: C++17
 - **Build system**: PlatformIO (`platform = native` via JQB_MinGW)
 - **UI framework**: [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) — lightweight Win32 UI library
+- **CAM library**: [JQB_CAMCommon](https://github.com/JAQUBA/JQB_CAMCommon) — reusable CAM utilities (path optimization, G-code format, geometry, arc math, route stats)
 - **Geometry library**: [Clipper2](https://github.com/AngusJohnson/Clipper2) — polygon boolean operations & offset (git submodule in `lib/Clipper2`)
 - **Rendering**: WinAPI GDI (via reusable CanvasWindow — zoom/pan/grid inherited)
 - **Target platform**: Windows 10+ (x64)
@@ -97,7 +109,7 @@ Window background: RGB(34, 37, 46). Canvas background: RGB(18, 22, 31). Button s
 
 ### Auto-Refresh Preview
 
-The GUI automatically updates the canvas preview when parameters change, using a debounced `WM_TIMER` mechanism (400ms delay, timer ID 9601):
+The GUI automatically updates the canvas preview when parameters change, using a debounced `WM_TIMER` mechanism (400ms delay, timer ID 9601) built on JQB_WindowsLib `Util/TimerUtils` helpers (`restartDebounceTimer`, `stopTimer`):
 
 - **Isolation params** (Tip width, Overlap, Offset) — `onTextChange` callback triggers `scheduleAutoRefresh(false)` → re-runs `generateToolpath()` from cached clearance data (no file re-parse)
 - **Position params** (X/Y offset) and **checkboxes** (Flip, No Vias) — trigger `scheduleAutoRefresh(true)` → full re-parse via `doLoadKicadDir()`
@@ -512,7 +524,7 @@ Add logic in `Pipeline.cpp` — both `runPipeline()` (full) and `parsePipelineDa
 
 ### Layer Panel
 
-Right-side LISTBOX (`g_hLayerPanel`, ID 9500) with section headers (prefixed `──`) and toggleable layers (☑/☐ prefix). `g_layerItems` vector maps each listbox index to a `LayerPanelItem` with a `bool*` toggle target. Click handler in `ResizeProc` looks up the clicked index and toggles the pointed-to flag. `rebuildLayerPanel()` called after loading KiCad files.
+Right-side LISTBOX (`g_hLayerPanel`, ID 9500) with collapsible section headers (prefix `▾` expanded / `▸` collapsed) and toggleable layers (☑/☐ prefix). Sections: `Board`, `Copper`, `Layers`, `Drills`, `Generated`. Lower levels also support dropdown behavior: `Top Sub-layers` / `Bottom Sub-layers`, `Pad Groups`, and per-category drill `Diameters` for PTH/NPTH. `g_treePanel` (`TreePanel*`, JQB_WindowsLib `UI/TreePanel`) wraps the LISTBOX and manages node state. Click handler in `ResizeProc` calls `g_treePanel->handleClick(idx)`; `addItem()` callbacks fire side-effects (e.g. `doRecomputeClearance`). `rebuildLayerPanel()` rebuilds the tree after loading KiCad files and after section state changes.
 
 #### Drill Diameter Sub-Items
 
@@ -563,13 +575,16 @@ Use `logMsg(const std::string&)` or `logMsg(const wchar_t*)` from `AppState.h`. 
 [env:windows_x86]
 platform = https://github.com/JAQUBA/JQB_MinGW.git
 lib_deps =
-    https://github.com/JAQUBA/JQB_WindowsLib.git
+    ../JQB_WindowsLib
+    ../JQB_CAMCommon
 lib_extra_dirs =
     lib/Clipper2/CPP
 ```
 
 > C++17, UNICODE, static linking, and library flags are added automatically by `compile_resources.py`.
 > Output binary name is set automatically from `InternalName` in `resources/resources.rc` `VS_VERSION_INFO`.
+> **Note**: `JQB_CAMCommon` is a standalone library in `d:\Programowanie\JQB_CAMCommon` (canonical location). Both gerber2gcode and WektoroweLitery2 reference it via `../JQB_CAMCommon`.
+> **Note**: Clipper2 is auto-downloaded by `../JQB_CAMCommon/library.json` (`build.extraScript`) when `lib/Clipper2` is missing.
 
 ---
 

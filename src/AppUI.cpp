@@ -14,14 +14,13 @@
 #include <UI/CheckBox/CheckBox.h>
 #include <UI/TextArea/TextArea.h>
 #include <UI/ProgressBar/ProgressBar.h>
-#include <Util/StringUtils.h>
+#include <Util/FileDialogs.h>
+#include <Util/TimerUtils.h>
+#include <UI/TreePanel/TreePanel.h>
 
 #include <windows.h>
 #include <commctrl.h>
-#include <shlobj.h>
-#include <commdlg.h>
 #include <functional>
-#include <cstring>
 
 // ════════════════════════════════════════════════════════════════════════════
 // Theme colors
@@ -129,52 +128,13 @@ static bool isThemedEdit(HWND hCtrl) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// File / folder dialog helpers
-// ════════════════════════════════════════════════════════════════════════════
-
-static std::string browseFolderUTF8(HWND owner, const wchar_t* title) {
-    BROWSEINFOW bi = {};
-    bi.hwndOwner = owner;
-    bi.lpszTitle = title;
-    bi.ulFlags   = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
-    if (pidl) {
-        wchar_t path[MAX_PATH];
-        if (SHGetPathFromIDListW(pidl, path)) {
-            CoTaskMemFree(pidl);
-            return StringUtils::wideToUtf8(path);
-        }
-        CoTaskMemFree(pidl);
-    }
-    return "";
-}
-
-static std::string saveFileDialogUTF8(HWND owner,
-    const wchar_t* filter, const wchar_t* title, const wchar_t* defExt)
-{
-    wchar_t file[MAX_PATH] = {};
-    OPENFILENAMEW ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner   = owner;
-    ofn.lpstrFilter = filter;
-    ofn.lpstrFile   = file;
-    ofn.nMaxFile    = MAX_PATH;
-    ofn.lpstrTitle  = title;
-    ofn.lpstrDefExt = defExt;
-    ofn.Flags       = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    if (GetSaveFileNameW(&ofn))
-        return StringUtils::wideToUtf8(file);
-    return "";
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // Layer panel LISTBOX
 // ════════════════════════════════════════════════════════════════════════════
 
 static const int LP_ID = 9500;
 
 static void doOpenKicadFolder() {
-    auto p = browseFolderUTF8(g_window->getHandle(),
+    auto p = FileDialogs::browseFolderUTF8(g_window->getHandle(),
         L"Select KiCad Gerber directory");
     if (!p.empty() && g_fldKicadDir) {
         g_fldKicadDir->setText(p.c_str());
@@ -346,6 +306,7 @@ static void createLayerPanel(HWND parent, int x, int y, int w, int h) {
         (WPARAM)CreateFontW(16, 0, 0, 0, FW_NORMAL, 0, 0, 0,
             DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI"), TRUE);
     SendMessageW(g_hLayerPanel, LB_SETITEMHEIGHT, 0, 20);
+    g_treePanel = new TreePanel(g_hLayerPanel);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -406,7 +367,7 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
     }
     // Auto-refresh debounce timer
     if (msg == WM_TIMER && wParam == 9601) {
-        KillTimer(hwnd, 9601);
+        TimerUtils::stopTimer(hwnd, 9601);
         if (g_needsReparse) {
             g_needsReparse = false;
             doLoadKicadDir();
@@ -429,49 +390,13 @@ static LRESULT CALLBACK ResizeProc(HWND hwnd, UINT msg, WPARAM wParam,
             scheduleAutoRefresh(true);
         return 0;
     }
-    // Layer panel click handler — uses g_layerItems mapping
+    // Layer panel click handler — delegates to TreePanel
     if (msg == WM_COMMAND && LOWORD(wParam) == LP_ID && HIWORD(wParam) == LBN_SELCHANGE) {
         int idx = (int)SendMessageW(g_hLayerPanel, LB_GETCURSEL, 0, 0);
-        if (idx >= 0 && idx < (int)g_layerItems.size() && g_canvas) {
-            auto& item = g_layerItems[idx];
-            if (!item.isSection && item.action == LayerPanelAction::SelectDrillOnlyMode) {
-                selectDrillOnlyModeFromLayerPanel();
-                rebuildLayerPanel();
-                g_canvas->redraw();
-            } else if (!item.isSection && item.flag) {
-                *item.flag = !(*item.flag);
-
-                // Sync cutout checkbox when cutout layer is toggled in panel
-                if (g_chkCutout && item.flag == &g_canvas->layers().cutout)
-                    g_chkCutout->setChecked(*item.flag);
-
-                // Check if toggled flag belongs to copper sub-visibility or pad group
-                bool isCopperSub = false;
-                {
-                    auto& topSub = g_canvas->copperTopSubVis();
-                    auto& botSub = g_canvas->copperBottomSubVis();
-                    if (item.flag == &topSub.traces || item.flag == &topSub.pads || item.flag == &topSub.regions ||
-                        item.flag == &botSub.traces || item.flag == &botSub.pads || item.flag == &botSub.regions) {
-                        isCopperSub = true;
-                    }
-                    // Also check per-aperture pad group visibility
-                    if (!isCopperSub) {
-                        auto* pgTop = g_canvas->copperTopPadGroups();
-                        auto* pgBot = g_canvas->copperBottomPadGroups();
-                        if (pgTop) for (auto& pg : *pgTop) { if (item.flag == &pg.visible) { isCopperSub = true; break; } }
-                        if (!isCopperSub && pgBot) for (auto& pg : *pgBot) { if (item.flag == &pg.visible) { isCopperSub = true; break; } }
-                    }
-                }
-
-                rebuildLayerPanel();
-                g_canvas->redraw();
-
-                // Copper sub-vis change → recompute clearance + isolation
-                if (isCopperSub)
-                    doRecomputeClearance();
-            }
+        if (g_treePanel && g_canvas && g_treePanel->handleClick(idx)) {
+            rebuildLayerPanel();
+            g_canvas->redraw();
         }
-        SendMessageW(g_hLayerPanel, LB_SETCURSEL, (WPARAM)-1, 0);
     }
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
@@ -580,7 +505,7 @@ void createUI(SimpleWindow* win) {
 
     Button* btnBrowseOut = new Button(m + 1094, y, 28, rowH, "...",
         [](Button*) {
-            auto p = saveFileDialogUTF8(g_window->getHandle(),
+            auto p = FileDialogs::saveFileDialogUTF8(g_window->getHandle(),
                 L"GCode (*.gcode)\0*.gcode\0All (*.*)\0*.*\0",
                 L"Save GCode", L"gcode");
             if (!p.empty()) g_fldOutputFile->setText(p.c_str());
@@ -713,7 +638,7 @@ void createUI(SimpleWindow* win) {
                 doOpenKicadFolder();
                 break;
             case IDM_FILE_SAVEAS: {
-                auto p = saveFileDialogUTF8(g_window->getHandle(),
+                auto p = FileDialogs::saveFileDialogUTF8(g_window->getHandle(),
                     L"GCode (*.gcode)\0*.gcode\0All (*.*)\0*.*\0",
                     L"Save GCode", L"gcode");
                 if (!p.empty() && g_fldOutputFile)

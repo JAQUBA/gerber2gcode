@@ -6,7 +6,6 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
-#include <cstring>
 #include <cstdint>
 
 // ── BMP file writing ─────────────────────────────────────────────────────────

@@ -21,7 +21,7 @@ Native Windows desktop application for converting KiCad Gerber (RS-274X) and Exc
 - **Excellon drill parser** — tool table, metric/inch auto-conversion, PTH/NPTH separation, via filtering, rout mode support
 - **Clipper2-based isolation** — contour-parallel inward offset toolpaths with configurable overlap and safety offset from copper edge
 - **Real-time GDI preview** — zoomable/pannable canvas with 13 layer types: board outline, copper (top/bottom), mask, silkscreen, paste, clearance, isolation paths, and drill holes
-- **Layer visibility panel** — toggle individual layers on/off for focused inspection
+- **Layer visibility panel** — toggle individual layers on/off for focused inspection, with collapsible dropdown-style sections and nested dropdowns for lower sub-layers (copper sub-components, pad groups, drill diameters)
 - **Drill-only switching** — both the layer panel `Drill Only` item and the top layer-selection dropdown can switch generation to drilling-only G-Code
 - **Polished dark workstation UI** — high-contrast themed numeric fields, wider layer panel with improved readability, and refined spacing/typography for long CAM sessions
 - **Quick action strip** — one-click `Reload`, `Fit`, `Reset`, `Grid`, `All On`, and `Focus` actions for faster preview iteration
@@ -42,18 +42,31 @@ Native Windows desktop application for converting KiCad Gerber (RS-274X) and Exc
 ### Prerequisites
 
 - [PlatformIO CLI](https://platformio.org/install/cli) or [PlatformIO IDE](https://platformio.org/install/ide) (VS Code extension)
-- Git (for cloning with submodules)
+- Git (used by pre-build script to auto-download Clipper2 if missing)
 
 ### Build
 
 ```bash
-# Clone with Clipper2 submodule
-git clone --recurse-submodules https://github.com/JAQUBA/gerber2gcode.git
+# Clone project
+git clone https://github.com/JAQUBA/gerber2gcode.git
 cd gerber2gcode
 
 # Build
 pio run
 ```
+
+Clipper2 is downloaded automatically on build (if missing) by JQB_CAMCommon library manifest (`library.json` → `build.extraScript`).
+
+For local library development in a multi-repo workspace, `platformio.ini` can use:
+
+```ini
+lib_deps =
+  ../JQB_WindowsLib
+  ../JQB_CAMCommon
+```
+
+If PlatformIO cache does not pick up freshly added files in local dependencies,
+remove `./.pio/libdeps/windows_x86/JQB_WindowsLib` or `./.pio/libdeps/windows_x86/JQB_CAMCommon` and rebuild.
 
 The output binary `gerber2gcode.exe` is placed in `.pio/build/windows_x86/`.
 
@@ -63,8 +76,9 @@ The output binary `gerber2gcode.exe` is placed in `.pio/build/windows_x86/`.
 
 | Library | Purpose | Integration |
 |---------|---------|-------------|
-| [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) | Win32 UI framework | Auto-fetched by PlatformIO |
-| [Clipper2](https://github.com/AngusJohnson/Clipper2) | Polygon boolean & offset | Git submodule in `lib/Clipper2` |
+| [JQB_WindowsLib](https://github.com/JAQUBA/JQB_WindowsLib) | Win32 UI framework (including `Util/FileDialogs`) | Local path dependency (`../JQB_WindowsLib`) |
+| JQB_CAMCommon | Shared CAM utilities (`PathOptimization`, `GCodeFormat`, `ArcMath`, `Geometry`, `RouteStats`) | Standalone local dependency (`../JQB_CAMCommon`) |
+| [Clipper2](https://github.com/AngusJohnson/Clipper2) | Polygon boolean & offset | Auto-downloaded to `lib/Clipper2` by pre-build script when missing |
 
 ## Usage
 
@@ -74,9 +88,10 @@ The output binary `gerber2gcode.exe` is placed in `.pio/build/windows_x86/`.
 4. **Set laminate thickness** — adjust only the `Mat` field for your board. Other machining fields (feeds/depths/offsets/drill/cutout toggles) are auto-managed and locked to prevent accidental mismatch.
 5. **Use quick actions** — `Reload` to re-parse, `Fit` to frame board, `Reset` to default view, `Grid` to toggle grid, `All On` to reveal all layers, `Focus` for copper-centric inspection
 6. **Select drilling-only mode if needed** — either pick `Drill` in the `Layer` dropdown or click `Drill Only` in the side panel to generate G-Code only for PTH/NPTH drilling without isolation or cutout
-7. **Generate** — click "Generate" (or `Ctrl+G`) to compute toolpaths (runs in background thread)
-8. **Preview** — inspect the result in the canvas (scroll to zoom, drag to pan, double-click to reset)
-9. **Export G-Code** — click "Export GCode" to save the `.gcode` file
+7. **Use collapsible layer sections** — click section headers in the side panel (`▾` / `▸`) to expand or collapse groups and focus on the subset you are currently editing
+8. **Generate** — click "Generate" (or `Ctrl+G`) to compute toolpaths (runs in background thread)
+9. **Preview** — inspect the result in the canvas (scroll to zoom, drag to pan, double-click to reset)
+10. **Export G-Code** — click "Export GCode" to save the `.gcode` file
 
 ### KiCad File Naming
 
@@ -128,6 +143,17 @@ src/
 │   └── Pipeline.h / .cpp       # Orchestration: detect → parse → isolate → classify exact circles → generate
 └── Debug/
     └── DebugImage.h / .cpp     # Debug BMP output (re-parses G-Code for validation)
+
+lib/
+├── Clipper2/                   # Git submodule: polygon boolean/offset library
+└── JQB_CAMCommon/
+  ├── library.json            # PlatformIO library manifest (LGPL-3.0-or-later)
+  ├── LICENSE                 # LGPL-3.0-or-later license text
+  ├── README.md               # API and usage notes
+  └── src/Common/
+    ├── PathOptimization.h/.cpp # Generic nearest-neighbor + 2-opt ordering for points/chains
+    ├── GCodeFormat.h/.cpp      # Reusable G-code token formatting helpers (XY/Z/F/IJ/S)
+    └── ArcMath.h/.cpp          # Reusable arc/line math helpers (circle fit, line distance, turn angle)
 ```
 
 ### Processing Pipeline

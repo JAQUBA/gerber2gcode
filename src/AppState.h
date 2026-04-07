@@ -17,6 +17,7 @@
 
 #include <string>
 #include <vector>
+#include <UI/TreePanel/TreePanel.h>
 
 // ════════════════════════════════════════════════════════════════════════════
 // Tool Preset
@@ -54,21 +55,9 @@ struct ToolPreset {
 // Layer Panel Item — maps listbox index to toggle action
 // ════════════════════════════════════════════════════════════════════════════
 
-enum class LayerPanelAction {
-    ToggleFlag,
-    SelectDrillOnlyMode,
-};
-
-struct LayerPanelItem {
-    bool  isSection;        // true = non-clickable header
-    bool* flag = nullptr;   // pointer to bool to toggle (null for sections)
-    LayerPanelAction action = LayerPanelAction::ToggleFlag;
-};
-
-extern std::vector<LayerPanelItem> g_layerItems;
-
 // ════════════════════════════════════════════════════════════════════════════
 // Global State (extern declarations)
+extern TreePanel* g_treePanel;
 // ════════════════════════════════════════════════════════════════════════════
 
 extern SimpleWindow*  g_window;
