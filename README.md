@@ -28,7 +28,7 @@ Native Windows desktop application for converting KiCad Gerber (RS-274X) and Exc
 - **Tool presets** — save/load grouped V-bit, combo, drill, and cutout presets with one-click switching, including common PCB sizes such as 30 deg V-bits, 1/64in and 1/32in end mills, 1/16in cutout mills, and micro-drills from 0.30 mm upward
 - **Selective generation** — independent checkboxes for Isolation, Drilling, and Cutout
 - **2-opt TSP path optimization** — nearest-neighbor + 2-opt local improvement for both isolation contours and drill hole ordering, minimizing rapid travel
-- **FluidNC-compatible G-Code** — clean G0/G1 output with time estimation and optional machine bounds checking
+- **FluidNC-compatible G-Code** — clean G0/G1/G2/G3 output with conservative arc generation for trusted circular pads, linear-only cutout emission, time estimation, and optional machine bounds checking
 - **Debug BMP export** — re-parses generated G-Code and renders a bitmap for visual verification
 - **KiCad auto-detection** — point at a KiCad fabrication output folder and all layers are detected automatically by filename suffix
 
@@ -118,11 +118,11 @@ src/
 ├── Geometry/
 │   └── Geometry.h / .cpp       # geo:: namespace — Clipper2 wrappers & shape generators
 ├── Toolpath/
-│   └── Toolpath.h / .cpp       # Contour-parallel isolation + 2-opt TSP ordering
+│   └── Toolpath.h / .cpp       # Contour-parallel isolation + 2-opt TSP ordering + exact-circle metadata
 ├── GCode/
-│   └── GCodeGen.h / .cpp       # G-Code generator + drill ordering + time estimation
+│   └── GCodeGen.h / .cpp       # G-Code generator + exact circular-pad arc emission + drill ordering + time estimation
 ├── Pipeline/
-│   └── Pipeline.h / .cpp       # Orchestration: detect → parse → isolate → generate
+│   └── Pipeline.h / .cpp       # Orchestration: detect → parse → isolate → classify exact circles → generate
 └── Debug/
     └── DebugImage.h / .cpp     # Debug BMP output (re-parses G-Code for validation)
 ```
@@ -141,16 +141,17 @@ KiCad fabrication folder
   ├─ clearance = outline - copper
   │
   ├─ generateToolpath()         contour-parallel inward offset
+  ├─ markArcEligible()          exact circular-pad match (conservative)
   ├─ orderContours()            nearest-neighbor + 2-opt TSP
   ├─ orderDrillHoles()          nearest-neighbor + 2-opt TSP
-  ├─ generateGCode()            FluidNC-compatible G0/G1
+  ├─ generateGCode()            FluidNC-compatible G0/G1/G2/G3
   │
   └─ generateDebugBMP()         optional visual verification
 ```
 
 ## G-Code Output
 
-FluidNC-compatible format with explicit modal reset preamble and safe spindle sequencing for drilling/cutout sections:
+FluidNC-compatible format with explicit modal reset preamble, exact two-semicircle output for trusted full circular pad-offset loops, and safe spindle sequencing for drilling/cutout sections:
 
 ```gcode
 ; gerber2gcode — CNC PCB isolation engraving

@@ -103,6 +103,61 @@ static double parseCoord(const std::string& raw, int fracDigits, bool leadingSup
     return neg ? -val : val;
 }
 
+// Detect whether all pad paths in a group are near-circular, and infer radius.
+static bool inferCircularPadRadius(const Paths& paths,
+                                   const std::vector<Point>& centers,
+                                   double& outRadius)
+{
+    if (paths.empty()) return false;
+
+    const double absTol = 0.06;   // mm
+    const double relTol = 0.04;   // 4%
+    const double centerTol = 0.25; // mm
+
+    double sumR = 0.0;
+    int validCount = 0;
+
+    for (auto& p : paths) {
+        if (p.size() < 8) return false;
+
+        double cx = 0.0, cy = 0.0;
+        for (auto& pt : p) { cx += pt.x; cy += pt.y; }
+        cx /= (double)p.size();
+        cy /= (double)p.size();
+
+        if (!centers.empty()) {
+            double best = 1e18;
+            for (auto& c : centers) {
+                double d = std::hypot(cx - c.x, cy - c.y);
+                if (d < best) best = d;
+            }
+            if (best > centerTol) return false;
+        }
+
+        double minR = 1e18, maxR = 0.0, accR = 0.0;
+        for (auto& pt : p) {
+            double r = std::hypot(pt.x - cx, pt.y - cy);
+            if (r < minR) minR = r;
+            if (r > maxR) maxR = r;
+            accR += r;
+        }
+
+        double meanR = accR / (double)p.size();
+        if (meanR < 0.01) return false;
+
+        double span = maxR - minR;
+        double rel = span / meanR;
+        if (span > absTol && rel > relTol) return false;
+
+        sumR += meanR;
+        validCount++;
+    }
+
+    if (validCount <= 0) return false;
+    outRadius = sumR / (double)validCount;
+    return outRadius > 0.01;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Macro expression evaluator (handles $N, +, -, *, /, x, X, parentheses)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -861,7 +916,7 @@ GerberComponents parseGerberComponents(const std::string& filepath) {
                     pg.name = buf;
                     break;
                 case ApertureType::Macro:
-                    pg.name = ap.macroName;
+                    pg.name = ap.macroName; 
                     break;
             }
         } else {
@@ -879,6 +934,15 @@ GerberComponents parseGerberComponents(const std::string& filepath) {
         pg.paths = unionAll(apPaths);
         if (!clear.empty() && !pg.paths.empty())
             pg.paths = difference(pg.paths, clear);
+
+        // Macro apertures can represent circles too. Infer circularity from geometry.
+        if (!pg.isCircular && !pg.paths.empty()) {
+            double inferredR = 0.0;
+            if (inferCircularPadRadius(pg.paths, pg.centers, inferredR)) {
+                pg.isCircular = true;
+                pg.apertureRadius = inferredR;
+            }
+        }
 
         if (!pg.paths.empty())
             gc.padGroups.push_back(pg);

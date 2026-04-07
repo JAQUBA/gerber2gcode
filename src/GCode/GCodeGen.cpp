@@ -23,6 +23,19 @@ struct ArcSegment {
     bool   clockwise;       // G2 if true, G3 if false
 };
 
+static double polygonSignedArea(const std::vector<geo::Point>& pts)
+{
+    if (pts.size() < 3) return 0.0;
+
+    double area2 = 0.0;
+    for (size_t i = 0; i < pts.size(); i++) {
+        const geo::Point& a = pts[i];
+        const geo::Point& b = pts[(i + 1) % pts.size()];
+        area2 += a.x * b.y - b.x * a.y;
+    }
+    return area2 * 0.5;
+}
+
 // Compute circumscribed circle of 3 points. Returns false if collinear.
 static bool circumCircle(double x1, double y1,
                          double x2, double y2,
@@ -288,7 +301,108 @@ static std::string fmtS(double s) {
     _snprintf(buf, sizeof(buf), "S=%.4f", s);
     return buf;
 }
+static bool emitExactCircleContour(std::ostringstream& out,
+                                   const ToolpathContour& contour,
+                                   double xOffset, double yOffset,
+                                   double feed)
+{
+    if (!contour.hasExactCircle || contour.points.size() < 3)
+        return false;
 
+    if (contour.arcRadius < MIN_ARC_RADIUS || contour.arcRadius > MAX_ARC_RADIUS)
+        return false;
+
+    double dx = contour.points.front().x - contour.arcCenterX;
+    double dy = contour.points.front().y - contour.arcCenterY;
+    double d = std::hypot(dx, dy);
+    if (d < 1e-9)
+        return false;
+
+    double ux = dx / d;
+    double uy = dy / d;
+    double sx = contour.arcCenterX + ux * contour.arcRadius;
+    double sy = contour.arcCenterY + uy * contour.arcRadius;
+    double mx = contour.arcCenterX - ux * contour.arcRadius;
+    double my = contour.arcCenterY - uy * contour.arcRadius;
+    bool clockwise = polygonSignedArea(contour.points) < 0.0;
+
+    out << (clockwise ? "G2 " : "G3 ")
+        << fmtXY(mx, my, xOffset, yOffset) << " "
+        << fmtIJ(contour.arcCenterX - sx, contour.arcCenterY - sy) << " "
+        << fmtF(feed) << "\n";
+
+    out << (clockwise ? "G2 " : "G3 ")
+        << fmtXY(sx, sy, xOffset, yOffset) << " "
+        << fmtIJ(contour.arcCenterX - mx, contour.arcCenterY - my) << " "
+        << fmtF(feed) << "\n";
+
+    return true;
+}
+
+// Try to emit a closed near-circle polyline as two exact semicircles.
+// This is a robust fallback for circular contours that were not matched to
+// explicit Gerber circular-pad metadata.
+static bool emitCircularPolylineContour(std::ostringstream& out,
+                                        const std::vector<geo::Point>& pts,
+                                        double xOffset, double yOffset,
+                                        double feed)
+{
+    if (pts.size() < 8)
+        return false;
+
+    double cx = 0.0, cy = 0.0;
+    for (auto& p : pts) { cx += p.x; cy += p.y; }
+    cx /= (double)pts.size();
+    cy /= (double)pts.size();
+
+    double minR = 1e18, maxR = 0.0, sumR = 0.0;
+    for (auto& p : pts) {
+        double r = std::hypot(p.x - cx, p.y - cy);
+        if (r < minR) minR = r;
+        if (r > maxR) maxR = r;
+        sumR += r;
+    }
+
+    double meanR = sumR / (double)pts.size();
+    if (meanR < MIN_ARC_RADIUS || meanR > MAX_ARC_RADIUS) 
+        return false;
+
+    double span = maxR - minR;
+    if (span > 0.03 && (span / meanR) > 0.02)
+        return false;
+
+    // Require a tight closure to avoid forcing circles on open/elongated loops.
+    double closure = std::hypot(pts.front().x - pts.back().x,
+                                pts.front().y - pts.back().y);
+    if (closure > 0.03)
+        return false;
+
+    double dx = pts.front().x - cx;
+    double dy = pts.front().y - cy;
+    double d = std::hypot(dx, dy);
+    if (d < 1e-9)
+        return false;
+
+    double ux = dx / d;
+    double uy = dy / d;
+    double sx = cx + ux * meanR;
+    double sy = cy + uy * meanR;
+    double mx = cx - ux * meanR;
+    double my = cy - uy * meanR;
+    bool clockwise = polygonSignedArea(pts) < 0.0;
+
+    out << (clockwise ? "G2 " : "G3 ")
+        << fmtXY(mx, my, xOffset, yOffset) << " "
+        << fmtIJ(cx - sx, cy - sy) << " "
+        << fmtF(feed) << "\n";
+
+    out << (clockwise ? "G2 " : "G3 ")
+        << fmtXY(sx, sy, xOffset, yOffset) << " "
+        << fmtIJ(cx - mx, cy - my) << " "
+        << fmtF(feed) << "\n";
+
+    return true;
+}
 // ── GCode generation (CNC engraver mode) ─────────────────────────────────────
 
 std::string generateGCode(
@@ -401,12 +515,30 @@ std::string generateGCode(
             auto& pts = contour.points;
             double sx = pts[0].x, sy = pts[0].y;
 
+            bool useExactCircle = job.use_arcs && contour.hasExactCircle && pts.size() >= 3;
+            if (useExactCircle) {
+                double dx = pts[0].x - contour.arcCenterX;
+                double dy = pts[0].y - contour.arcCenterY;
+                double d = std::hypot(dx, dy);
+                if (d > 1e-9) {
+                    sx = contour.arcCenterX + (dx / d) * contour.arcRadius;
+                    sy = contour.arcCenterY + (dy / d) * contour.arcRadius;
+                } else {
+                    useExactCircle = false;
+                }
+            }
+
             // Rapid to start position
             out << "G0 " << fmtXY(sx, sy, xOffset, yOffset) << "\n";
             // Plunge to cutting depth
             out << "G1 " << fmtZ(zCut) << " " << fmtF(engravePlungeFeed) << "\n";
 
-            if (job.use_arcs && contour.arcEligible && pts.size() >= 3) {
+            if (useExactCircle && emitExactCircleContour(out, contour, xOffset, yOffset, engraveFeed)) {
+                // Exact circular pad-offset contours are emitted as two semicircles.
+            } else if (job.use_arcs && contour.arcEligible &&
+                       emitCircularPolylineContour(out, pts, xOffset, yOffset, engraveFeed)) {
+                // Geometric circle fallback (no exact Gerber center required).
+            } else if (job.use_arcs && contour.arcEligible && pts.size() >= 3) {
                 std::vector<geo::Point> loop(pts.begin(), pts.end());
                 loop.push_back(pts[0]);
                 auto segments = fitArcs(loop, ARC_TOLERANCE);
@@ -491,32 +623,14 @@ std::string generateGCode(
             // Plunge to current pass depth
             out << "G1 " << fmtZ(currentZ) << " " << fmtF(spindleFeed) << "\n";
 
-            if (job.use_arcs && cutoutPath.size() >= 3) {
-                // Build closed loop
-                std::vector<geo::Point> loop(cutoutPath.begin(), cutoutPath.end());
-                loop.push_back(cutoutPath[0]);
-                auto segments = fitArcs(loop, ARC_TOLERANCE);
-                for (auto& seg : segments) {
-                    if (seg.isArc) {
-                        out << (seg.clockwise ? "G2 " : "G3 ")
-                            << fmtXY(seg.ex, seg.ey, xOffset, yOffset) << " "
-                            << fmtIJ(seg.ci, seg.cj) << " "
-                            << fmtF(spindleFeed) << "\n";
-                    } else {
-                        out << "G1 " << fmtXY(seg.ex, seg.ey, xOffset, yOffset) << " "
-                            << fmtF(spindleFeed) << "\n";
-                    }
-                }
-            } else {
-                // Cut along outline (G1 only)
-                for (size_t i = 1; i < cutoutPath.size(); i++) {
-                    out << "G1 " << fmtXY(cutoutPath[i].x, cutoutPath[i].y, xOffset, yOffset) << " "
-                            << fmtF(spindleFeed) << "\n";
-                }
-                // Close the loop
-                out << "G1 " << fmtXY(cutoutPath[0].x, cutoutPath[0].y, xOffset, yOffset) << " "
-                    << fmtF(spindleFeed) << "\n";
+            // Keep cutout linear for maximum robustness on controllers.
+            for (size_t i = 1; i < cutoutPath.size(); i++) {
+                out << "G1 " << fmtXY(cutoutPath[i].x, cutoutPath[i].y, xOffset, yOffset) << " "
+                        << fmtF(spindleFeed) << "\n";
             }
+            // Close the loop
+            out << "G1 " << fmtXY(cutoutPath[0].x, cutoutPath[0].y, xOffset, yOffset) << " "
+                << fmtF(spindleFeed) << "\n";
             // Retract
             out << "G0 " << fmtZ(zRapidClear) << "\n";
         }

@@ -52,9 +52,9 @@ gerber2gcode/
 | **GerberParser** | RS-274X parser: FSLAX format, aperture definitions (Circle/Rect/Obround/Polygon/Macro), AM macro evaluation (full expression evaluator with primitives 1/4/5/7/20/21), D01/D02/D03, G36/G37 regions, G02/G03 arcs, G74/G75 quadrant modes, LPD/LPC polarity. Two output modes: `parseGerber()` → `geo::Paths` (flat union), `parseGerberComponents()` → `GerberComponents` (categorized: traces=D01, pads=D03, regions=G36/G37). `PadGroup` struct groups D03 flashes by aperture D-code with human-readable names (e.g. "Circle Ø0.800mm", "Rect 1.27×0.64mm"), `isCircular` flag (Circle aperture), `apertureRadius`, and `centers` (D03 flash positions). `GerberComponents::combined()` unions all categories. `GerberComponents::visiblePads()` unions only visible pad groups. |
 | **DrillParser** | Excellon parser: tool table (`TnnCdia`), coordinates, METRIC/INCH units, rout mode (M15/M16), slotted holes (G85 — skipped), via filtering. Outputs `std::vector<DrillHole>`. |
 | **Geometry** | `geo::` namespace — Clipper2 type aliases (`Point`, `Path`, `Paths`). Shape generators: `makeCircle`, `makeRect`, `makeObround`, `makeRegPoly`. Boolean ops: `unionAll`, `difference`, `intersect`, `offset`. Utilities: `bufferLine`, `bufferPath`, `simplifyPaths`, `translate`, `flipX`, `isEmpty`, `totalArea`. |
-| **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. `ToolpathContour` has `arcEligible` flag set by `markArcEligible()`. |
-| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — FluidNC-compatible G0/G1/G2/G3 output with isolation + drilling + cutout sections. Arc fitting post-processor converts G1 polylines to G2/G3 arcs only for arc-eligible contours (circular pad offsets, determined from Gerber aperture type). Configurable via `use_arcs`. Multi-pass depth cutting for cutout. Optional engraver spindle (M3) before isolation. Optional drill dwell (G4) at hole bottom. G28 return to home at program end. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
-| **Pipeline** | `detectKicadFiles(dir)` — auto-detect layers by filename suffix. `runPipeline(params, log, result)` — full workflow (parse → normalize → clip → isolate → mark arc eligibility → order → generate → export). `parsePipelineData(params, log)` — parse-only for live preview. `markArcEligible(contours, circPads, tolerance)` — tags contours centered on circular pads as arc-eligible. `CircPadInfo` — circular pad center + radius from Gerber parsing. |
+| **Toolpath** | `generateToolpath(clearance, config)` — contour-parallel inward offset with configurable overlap. `orderContours()` — nearest-neighbor + 2-opt TSP optimization. `ToolpathContour` stores `arcEligible` plus exact-circle metadata (`hasExactCircle`, `arcCenterX/Y`, `arcRadius`) set by `markArcEligible()`. |
+| **GCodeGen** | `generateGCode(contours, holes, cutoutPath, config, xOff, yOff)` — FluidNC-compatible G0/G1/G2/G3 output with isolation + drilling + cutout sections. Full circular pad-offset contours emit as two exact semicircle commands using stored center/radius metadata; non-qualified contours remain G1. Configurable via `use_arcs` (isolation only). Cutout is emitted as G1-only for robustness. Multi-pass depth cutting for cutout. Optional engraver spindle (M3) before isolation. Optional drill dwell (G4) at hole bottom. G28 return to home at program end. `orderDrillHoles()` — nearest-neighbor + 2-opt. `estimateJobTime()` — time estimate. |
+| **Pipeline** | `detectKicadFiles(dir)` — auto-detect layers by filename suffix. `runPipeline(params, log, result)` — full workflow (parse → normalize → clip → isolate → mark arc eligibility → order → generate → export). `parsePipelineData(params, log)` — parse-only for live preview. `markArcEligible(contours, circPads, tolerance)` — matches contours to known circular pad centers, validates radial spread against that exact center, and stores exact-circle metadata for robust G2/G3 output. `CircPadInfo` — circular pad center + radius from Gerber parsing. |
 | **DebugImage** | `generateDebugBMP(gcodePath, outputPath, config, holes)` — re-parses G-Code, renders as 24-bit BMP for visual validation. |
 
 ## Tech Stack
@@ -106,7 +106,7 @@ The GUI automatically updates the canvas preview when parameters change, using a
 - **Tool preset selection** — `applyActiveToolPreset()` sets all core machining fields and auto-selects generation mode by `ToolPresetKind`: `Isolation` (isolation only), `Combo` (isolation + drills), `Drill` (drills only), `Cutout` (cutout only). It also applies overlap/offset defaults and resets X/Y/Flip/No Vias.
 - **Startup** — if a saved KiCad directory exists in settings, `doLoadKicadDir()` is called automatically
 
-`doLoadKicadDir()` calls `parsePipelineData()` (lightweight parse-only pipeline) then `generateToolpath()` for isolation preview. `doRefreshIsolation()` only regenerates isolation contours from cached `g_pipelineData.clearance`.
+`doLoadKicadDir()` calls `parsePipelineData()` (lightweight parse-only pipeline) then `generateToolpath()` for isolation preview. `doRefreshIsolation()` only regenerates isolation contours from cached `g_pipelineData.clearance`, then re-runs exact-circle qualification via `markArcEligible()`.
 
 ---
 
@@ -205,9 +205,9 @@ G0 Z2.5000
 G0 X10.000 Y20.000       ; rapid to contour start
 G1 Z1.4500 F150          ; plunge at half feed
 G1 X15.000 Y20.000 F300  ; cut (linear)
-; (when use_arcs=true, arc segments replace G1 sequences:)
-G2 X20.000 Y25.000 I5.000 J0.000 F300  ; clockwise arc
-G3 X25.000 Y20.000 I0.000 J-5.000 F300 ; counter-clockwise arc
+; (when use_arcs=true, exact circular pad loops emit as two semicircles:)
+G2 X20.000 Y25.000 I5.000 J0.000 F300  ; semicircle 1
+G2 X10.000 Y20.000 I-5.000 J0.000 F300 ; semicircle 2
 G0 Z2.5000               ; retract
 
 ; === Drilling ===
@@ -253,14 +253,16 @@ Cutout uses multi-pass depth: starts at Z=materialThickness, descends by `cutout
 
 Arc fitting is **Gerber-aware**: the decision whether a contour is eligible for G2/G3 conversion is determined from the original Gerber aperture types, not from polyline geometry alone.
 
+For full circular contours around round pads, the generator does **not** rely on heuristic polyline fitting anymore. Instead it emits two exact semicircles using the known pad center and the measured offset radius, which is more robust for Grbl/FluidNC-style controllers than attempting a single inferred full-circle command.
+
 **Arc eligibility pipeline:**
 
-1. **GerberParser** marks `PadGroup.isCircular = true` for Circle apertures and stores flash center positions (`PadGroup.centers`) and radius (`PadGroup.apertureRadius`)
+1. **GerberParser** marks `PadGroup.isCircular = true` for Circle apertures and stores flash center positions (`PadGroup.centers`) and radius (`PadGroup.apertureRadius`); additionally, it infers circular macro pad groups from geometry (`inferCircularPadRadius`) when aperture type alone is not enough
 2. **Pipeline** collects `CircPadInfo` (center + radius) from circular PadGroups into `PipelineResult.circularPads`
-3. **`markArcEligible()`** checks each toolpath contour: (a) compute centroid, (b) verify circularity (max-min radius / mean < 8%), (c) match centroid to a known circular pad center within tolerance → sets `ToolpathContour.arcEligible = true`
-4. **GCodeGen** applies `fitArcs()` ONLY to contours where `arcEligible == true`; all other contours emit pure G1
+3. **`markArcEligible()`** checks each toolpath contour against known circular pad centers with radial consistency checks and stores exact-circle metadata (`hasExactCircle`, center, radius)
+4. **GCodeGen** emits two exact semicircles for contours with `hasExactCircle == true`; remaining contours fall back to pure G1
 
-**Arc fitting algorithm** (applied only to arc-eligible contours):
+**Arc fitting algorithm** (conservative fallback for arc-qualified isolation contours):
 
 1. For each contour/cutout polyline, build closed loop (append start point)
 2. Starting from each point, seed a circumscribed circle through 3 consecutive points
@@ -277,7 +279,7 @@ Arc fitting is **Gerber-aware**: the decision whether a contour is eligible for 
 
 Constants: `ARC_TOLERANCE=0.005mm`, `MIN_ARC_RADIUS=0.05mm`, `MAX_ARC_RADIUS=100mm`, `MIN_ARC_POINTS=4`, `MIN_ARC_SWEEP=10°`, `MAX_ARC_SWEEP=355°`.
 
-Benefits: smaller G-Code files, smoother motion (controller plans arc natively), better surface finish on circular pad offsets. Straight isolation segments (traces, rectangular pads) stay as G1.
+Benefits: smaller G-Code files, smoother motion (controller plans arc natively), and better controller stability because only trusted circular pad loops are emitted as arcs while cutout and non-qualified contours stay as G1.
 
 ### Drill Optimization
 

@@ -144,38 +144,72 @@ static std::vector<CircPadInfo> collectCircularPads(const GerberComponents& gc) 
 void markArcEligible(std::vector<ToolpathContour>& contours,
                              const std::vector<CircPadInfo>& circPads,
                              double matchTolerance) {
-    if (circPads.empty()) return;
+    const double RADIAL_ABS_TOL = 0.04;  // mm
+    const double RADIAL_REL_TOL = 0.02;  // 2%
 
     for (auto& contour : contours) {
-        if (contour.points.size() < 4) continue;
+        contour.arcEligible    = false;
+        contour.hasExactCircle = false;
+        contour.arcCenterX     = 0.0;
+        contour.arcCenterY     = 0.0;
+        contour.arcRadius      = 0.0;
 
-        // Compute centroid
-        double cx = 0, cy = 0;
+        if (contour.points.size() < 6) continue;
+
+        // Compute vertex centroid
+        double cx = 0.0, cy = 0.0;
         for (auto& pt : contour.points) { cx += pt.x; cy += pt.y; }
-        cx /= contour.points.size();
-        cy /= contour.points.size();
+        cx /= (double)contour.points.size();
+        cy /= (double)contour.points.size();
 
-        // Compute min/max distance from centroid
-        double minR = 1e18, maxR = 0;
-        for (auto& pt : contour.points) {
-            double r = std::hypot(pt.x - cx, pt.y - cy);
-            if (r < minR) minR = r;
-            if (r > maxR) maxR = r;
-        }
-        double meanR = (minR + maxR) / 2.0;
+        // ── Phase 1: match against known circular pads (exact aperture center) ──
+        // Conservative center tolerance to avoid false positive circles.
+        if (!circPads.empty()) {
+            const double centroidTol = std::max(0.20, std::min(0.80, matchTolerance * 2.0));
 
-        // Circularity check: contour must be approximately circular
-        if (meanR < 0.01) continue;  // degenerate
-        if ((maxR - minR) / meanR > 0.08) continue;  // >8% variation = not circular
+            int    bestPad      = -1;
+            double bestCentDist = 1e18;
+            double bestMeanR    = 0.0;
 
-        // Check if centroid matches any known circular pad center
-        for (auto& pad : circPads) {
-            double dist = std::hypot(cx - pad.cx, cy - pad.cy);
-            if (dist <= matchTolerance) {
-                contour.arcEligible = true;
-                break;
+            for (size_t k = 0; k < circPads.size(); k++) {
+                double centerDist = std::hypot(cx - circPads[k].cx, cy - circPads[k].cy);
+                if (centerDist > centroidTol) continue;
+
+                // Measure radial consistency from the known pad center
+                double minR = 1e18, maxR = 0.0, sumR = 0.0;
+                for (auto& pt : contour.points) {
+                    double r = std::hypot(pt.x - circPads[k].cx, pt.y - circPads[k].cy);
+                    if (r < minR) minR = r;
+                    if (r > maxR) maxR = r;
+                    sumR += r;
+                }
+                double meanR = sumR / (double)contour.points.size();
+                if (meanR < 0.01) continue;
+
+                double radialSpan = maxR - minR;
+                double radialRel  = radialSpan / meanR;
+                if (radialSpan > RADIAL_ABS_TOL && radialRel > RADIAL_REL_TOL) continue;
+
+                if (centerDist < bestCentDist) {
+                    bestPad      = (int)k;
+                    bestCentDist = centerDist;
+                    bestMeanR    = meanR;
+                }
+            }
+
+            if (bestPad >= 0) {
+                contour.arcEligible    = true;
+                contour.hasExactCircle = true;
+                contour.arcCenterX     = circPads[bestPad].cx;
+                contour.arcCenterY     = circPads[bestPad].cy;
+                contour.arcRadius      = bestMeanR;
+                continue;  // already matched — skip Phase 2
             }
         }
+
+        // ── Phase 2 intentionally disabled ──
+        // We keep arc eligibility metadata-driven (from circular pads) to avoid
+        // converting near-linear contour fragments into erroneous arcs.
     }
 }
 
@@ -365,9 +399,10 @@ bool runPipeline(const PipelineParams& params, LogCallback log,
             {
                 int arcCount = 0;
                 for (auto& c : contours) if (c.arcEligible) arcCount++;
-                char buf[96];
-                _snprintf(buf, sizeof(buf), "%d contours generated (%d arc-eligible)",
-                         (int)contours.size(), arcCount);
+                char buf[128];
+                _snprintf(buf, sizeof(buf),
+                    "%d contours generated (%d arc-eligible, %d circ pads)",
+                    (int)contours.size(), arcCount, (int)result.circularPads.size());
                 log(buf);
             }
             result.contours = contours;
