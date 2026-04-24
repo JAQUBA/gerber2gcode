@@ -103,6 +103,8 @@ gerber2gcode/
 
 Window background: RGB(34, 37, 46). Canvas background: RGB(18, 22, 31). Button styles defined in `AppUI.cpp`: green for actions (`CLR_ACTION_BG`), amber for primary generate (`CLR_EXPORT_BG`), blue for tool dropdown (`CLR_TOOL_BG`). Numeric `InputField` controls and layer `LISTBOX` are themed through `WM_CTLCOLOREDIT` / `WM_CTLCOLORLISTBOX` for high-contrast dark readability.
 
+> **Whenever adding new UI**, follow the prescriptive layout rules in [JQB_WindowsLib UI Design Guide](https://github.com/JAQUBA/JQB_WindowsLib/blob/master/docs/UIDesignGuide.md) — cards, section headers, accent buttons, status footer, 8/16/24 spacing rule, anti-patterns. The library `applyTheme()` + `Theme::*` palettes are an alternative to the hand-rolled colours above and should be preferred for new screens.
+
 ### Background Thread Pattern
 
 `doGenerate()` spawns a `CreateThread` worker that runs `runPipeline()`. The `g_isRunning` flag (volatile bool) prevents concurrent runs and controls the progress bar (marquee). UI updates from the thread use `logMsg()` which is safe (TextArea::append).
